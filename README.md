@@ -94,6 +94,31 @@ pnpm tauri build      # release bundle
 The app's path box defaults to `/tmp/opendm-demo`; point it at any git
 repository you want to browse.
 
+### Packaging a standalone binary
+
+`tauri build` compiles the UI into the Rust binary (assets are embedded at
+compile time via `generate_context!`), so the release executable needs no dev
+server and no `node_modules`:
+
+```sh
+cd apps/desktop
+pnpm tauri build
+```
+
+Outputs:
+
+- **Standalone executable** — `src-tauri/target/release/open-pdm-app` (~15 MiB).
+  Copy it anywhere and run it.
+- **Installers** — `src-tauri/target/release/bundle/`:
+  - `deb/OpenPDM_<ver>_amd64.deb` — `sudo dpkg -i <file>`, then run `open-pdm-app`
+  - `rpm/OpenPDM-<ver>-1.x86_64.rpm`
+  - `appimage/OpenPDM_<ver>_amd64.AppImage` — `chmod +x` and run (needs `libfuse2`,
+    or use `--appimage-extract-and-run`)
+
+The only runtime dependency is the OS webview (Linux: `libwebkit2gtk-4.1-0` +
+`libgtk-3-0`; Windows: WebView2; macOS: system WKWebView). Bundles must be built
+on their target OS — there is no Linux→Windows/macOS cross-compile.
+
 ## The handler seam
 
 ```rust
