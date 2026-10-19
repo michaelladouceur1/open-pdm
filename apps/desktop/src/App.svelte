@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { open } from "@tauri-apps/plugin-dialog";
   import {
+    createProject,
     getFiles,
     getMesh,
     getMetadata,
@@ -45,6 +47,37 @@
     } finally {
       busy = false;
     }
+  }
+
+  // Open the native folder picker, then load the chosen project.
+  async function openProjectPicker() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Open project folder",
+    });
+    if (typeof selected !== "string") return;
+    projectPath = selected;
+    await load();
+  }
+
+  // Choose a folder, initialise a git repository in it, then open the project.
+  async function newProject() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose a folder for the new project",
+    });
+    if (typeof selected !== "string") return;
+    error = null;
+    try {
+      await createProject(selected);
+    } catch (e) {
+      error = String(e);
+      return;
+    }
+    projectPath = selected;
+    await load();
   }
 
   async function loadFiles() {
@@ -125,7 +158,8 @@
       placeholder="/path/to/project"
       onkeydown={(e) => e.key === "Enter" && load()}
     />
-    <button onclick={load} disabled={busy}>Open</button>
+    <button onclick={newProject} disabled={busy}>New</button>
+    <button class="secondary" onclick={openProjectPicker} disabled={busy}>Open</button>
     <button class="secondary" onclick={buildIndex} disabled={busy || !info}>Index</button>
     {#if busy}<span class="muted">working…</span>{/if}
   </header>

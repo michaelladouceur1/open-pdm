@@ -10,8 +10,8 @@ repository through to a live 3D preview.
 
 ## What works today
 
-- **Core (Rust)** — open any local git repository (no remote required), walk
-  revision history, list files at any revision, read blobs.
+- **Core (Rust)** — open any local git repository (no remote required), or
+  create one, walk revision history, list files at any revision, read blobs.
 - **Content-addressed index (SQLite)** — indexes revisions and files keyed by
   git blob oid, so identical content is stored once per revision *and* across
   repositories. Fully rebuildable from git; never committed.
@@ -91,8 +91,9 @@ pnpm tauri dev        # dev, with hot reload
 pnpm tauri build      # release bundle
 ```
 
-The app's path box defaults to `/tmp/opendm-demo`; point it at any git
-repository you want to browse.
+Use **Open** to pick the folder of an existing project, or **New** to pick a
+folder and initialise a fresh git repository in it. The path box shows (and can
+still be edited to) the current project; it defaults to `/tmp/opendm-demo`.
 
 ### Packaging a standalone binary
 

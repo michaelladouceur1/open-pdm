@@ -29,9 +29,10 @@ pub struct FileEntry {
 
 /// A thin, git-backed view of a project.
 ///
-/// Git is the source of truth; this type only reads. Writes, network and
-/// LFS/lock operations are intentionally left to the `git`/`git-lfs`
-/// subprocess layer (not part of this first pass).
+/// Git is the source of truth. This type reads history and can initialise an
+/// empty repository ([`Project::init`]); content writes, network and LFS/lock
+/// operations are intentionally left to the `git`/`git-lfs` subprocess layer
+/// (not part of this first pass).
 pub struct Project {
     repo: git2::Repository,
     root: PathBuf,
@@ -43,6 +44,20 @@ impl Project {
         let display = path.as_ref().display().to_string();
         let repo = git2::Repository::discover(path)
             .map_err(|_| Error::NotARepository(display))?;
+        let root = repo
+            .workdir()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| repo.path().to_path_buf());
+        Ok(Self { repo, root })
+    }
+
+    /// Initialise a new git repository rooted at `path` and return a view of it.
+    ///
+    /// Used by the desktop app's "New" flow. If a repository already exists at
+    /// (or above) `path`, the existing repository is (re)initialised in place
+    /// rather than failing, so creating a project is idempotent.
+    pub fn init(path: impl AsRef<Path>) -> Result<Self> {
+        let repo = git2::Repository::init(path)?;
         let root = repo
             .workdir()
             .map(Path::to_path_buf)
@@ -99,7 +114,13 @@ impl Project {
     }
 
     /// List files in a revision's tree. `rev = None` means HEAD.
+    ///
+    /// A freshly-initialised repository has an unborn HEAD; it simply has no
+    /// files yet rather than being an error.
     pub fn files_at(&self, rev: Option<&str>) -> Result<Vec<FileEntry>> {
+        if rev.is_none() && self.is_unborn() {
+            return Ok(Vec::new());
+        }
         let tree = self.tree_for(rev)?;
         let repo = &self.repo;
         let mut out: Vec<FileEntry> = Vec::new();
@@ -186,6 +207,30 @@ mod tests {
         let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
         repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parent_refs)
             .unwrap();
+    }
+
+    #[test]
+    fn init_creates_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("new-project");
+
+        let project = Project::init(&nested).unwrap();
+
+        assert!(nested.join(".git").is_dir());
+        assert_eq!(project.root(), nested.as_path());
+        assert!(project.is_unborn());
+        assert_eq!(project.revisions(10).unwrap().len(), 0);
+        // An unborn repo has no files; this must not error.
+        assert!(project.files_at(None).unwrap().is_empty());
+        assert!(project.head_revision().is_err());
+    }
+
+    #[test]
+    fn init_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::init(dir.path()).unwrap();
+        let project = Project::init(dir.path()).unwrap();
+        assert!(project.root().join(".git").is_dir());
     }
 
     #[test]

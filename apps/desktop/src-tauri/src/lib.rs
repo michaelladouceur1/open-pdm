@@ -1,9 +1,9 @@
 //! Tauri host for the OpenPDM desktop app.
 //!
-//! The host is deliberately thin: it exposes the read-only core (git history,
-//! file metadata, tessellation, indexing) to the Svelte frontend over typed
-//! IPC commands. Writes, LFS and lock operations are intentionally out of scope
-//! for this first pass.
+//! The host is deliberately thin: it exposes the core (git history, file
+//! metadata, tessellation, indexing, repository creation) to the Svelte
+//! frontend over typed IPC commands. Content writes, LFS and lock operations
+//! are intentionally out of scope for this first pass.
 
 use open_pdm_core::{
     FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project, Revision,
@@ -28,18 +28,32 @@ fn open(path: &str) -> Result<Project, String> {
     Project::open(path).map_err(to_err)
 }
 
-#[tauri::command]
-fn open_project(path: String) -> Result<ProjectInfo, String> {
-    let project = open(&path)?;
+/// Flatten a [`Project`] for transport to the UI.
+fn project_info(project: &Project) -> ProjectInfo {
     let head = project.head_revision().ok();
     let file_count = project.files_at(None).map(|files| files.len()).unwrap_or(0);
-    Ok(ProjectInfo {
+    ProjectInfo {
         root: project.root().display().to_string(),
         bare: project.is_bare(),
         branch: project.branch(),
         head,
         file_count,
-    })
+    }
+}
+
+#[tauri::command]
+fn open_project(path: String) -> Result<ProjectInfo, String> {
+    Ok(project_info(&open(&path)?))
+}
+
+/// Create a new git repository at `path` and return its summary.
+///
+/// Backs the "New" button: the UI picks a folder, then this initialises a
+/// repository there so it can be browsed immediately.
+#[tauri::command]
+fn create_project(path: String) -> Result<ProjectInfo, String> {
+    let project = Project::init(&path).map_err(to_err)?;
+    Ok(project_info(&project))
 }
 
 #[tauri::command]
@@ -82,8 +96,10 @@ fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             open_project,
+            create_project,
             revisions,
             files,
             metadata,

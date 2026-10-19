@@ -50,6 +50,9 @@ export interface IndexStats {
 export const openProject = (path: string) =>
   invoke<ProjectInfo>("open_project", { path });
 
+export const createProject = (path: string) =>
+  invoke<ProjectInfo>("create_project", { path });
+
 export const getRevisions = (path: string, limit: number) =>
   invoke<Revision[]>("revisions", { path, limit });
 
