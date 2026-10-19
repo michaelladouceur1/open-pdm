@@ -1,0 +1,16 @@
+/target
+**/target
+
+# node / frontend
+node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/schemas/
+
+# local index databases
+*.pdmdb
+*.sqlite
+*.sqlite3
+
+# local machine state
+.opendm/
