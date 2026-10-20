@@ -250,8 +250,14 @@
 </div>
 
 <style>
+  :global(html) {
+    background: #101217;
+    color-scheme: dark;
+  }
+
   :global(body) {
     margin: 0;
+    min-height: 100vh;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     background: #101217;
     color: #e6e8ee;
@@ -261,6 +267,7 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    background: #101217;
   }
 
   header {

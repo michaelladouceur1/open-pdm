@@ -13,7 +13,7 @@ repository through to a live 3D preview.
 - **Core (Rust)** — open any local git repository (no remote required), or
   create one, walk revision history, list files at any revision, read blobs.
 - **Content-addressed index (SQLite)** — indexes revisions and files keyed by
-  git blob oid, so identical content is stored once per revision *and* across
+  git blob oid, so identical content is stored once per revision _and_ across
   repositories. Fully rebuildable from git; never committed.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII) and OBJ (mesh + metadata),
@@ -56,12 +56,23 @@ apps/desktop/           Tauri v2 app (Svelte + three.js frontend)
 apps/desktop/src-tauri/ Tauri host (thin IPC wrapper over core)
 ```
 
-## Prerequisites
+## Prerequisites (Development)
 
 - Rust (stable) — https://rustup.rs
 - Node.js + pnpm
-- Linux desktop build deps: `libwebkit2gtk-4.1-dev`, `build-essential`,
-  `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
+- Linux desktop build deps (Debian/Ubuntu):
+
+  ```sh
+  sudo apt update
+  sudo apt install -y \
+    build-essential pkg-config \
+    libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev \
+    libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+  ```
+
+  `libdbus-1-dev` is required by Tauri's `tao` windowing layer; `pkg-config`
+  is needed to locate the system libraries at build time.
+
 - `git` (and `git-lfs` later, for LFS features)
 
 ## Build & run
