@@ -45,7 +45,10 @@
     const resize = () => {
       const w = container.clientWidth;
       const h = Math.max(container.clientHeight, 1);
-      renderer.setSize(w, h, false);
+      // Let three.js set the canvas CSS size as well as its drawing buffer;
+      // with updateStyle=false the HiDPI buffer makes the canvas lay out at
+      // devicePixelRatio× the container and get clipped.
+      renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     };
@@ -117,5 +120,8 @@
     background: #181a20;
     border-radius: 8px;
     overflow: hidden;
+  }
+  .viewer :global(canvas) {
+    display: block;
   }
 </style>
