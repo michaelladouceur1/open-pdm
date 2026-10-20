@@ -13,4 +13,4 @@ apps/desktop/src-tauri/gen/schemas/
 *.sqlite3
 
 # local machine state
-.opendm/
+.openpdm/

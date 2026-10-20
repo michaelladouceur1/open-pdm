@@ -20,7 +20,7 @@ repository through to a live 3D preview.
   with a generic fallback for everything else.
 - **Desktop app (Tauri v2 + Svelte + three.js)** — browse revisions and files,
   inspect extracted metadata, and preview meshes in a 3D viewport.
-- **Demo CLI (`opendm`)** — the same core exposed from the terminal.
+- **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
 Not yet implemented (by design, see the plan): writes, `git-lfs` transfer and
 locking, STEP/IGES tessellation (`occt-import-js`), sidecar handlers, remote
@@ -51,7 +51,7 @@ Design constraints baked in from the start:
 
 ```
 crates/core/            Rust core: git, index, handlers, mesh
-crates/cli/             `opendm` demo CLI
+crates/cli/             `openpdm` demo CLI
 apps/desktop/           Tauri v2 app (Svelte + three.js frontend)
 apps/desktop/src-tauri/ Tauri host (thin IPC wrapper over core)
 ```
@@ -81,16 +81,16 @@ apps/desktop/src-tauri/ Tauri host (thin IPC wrapper over core)
 
 ```sh
 cargo test --workspace          # run the test suite
-cargo build --bin opendm
+cargo build --bin openpdm
 
 # Try it on any repo:
-target/debug/opendm info        /path/to/repo
-target/debug/opendm revisions   /path/to/repo -n 20
-target/debug/opendm files       /path/to/repo
-target/debug/opendm meta        /path/to/repo path/to/part.stl
-target/debug/opendm mesh        /path/to/repo path/to/part.stl
-target/debug/opendm index       /path/to/repo
-target/debug/opendm handlers
+target/debug/openpdm info        /path/to/repo
+target/debug/openpdm revisions   /path/to/repo -n 20
+target/debug/openpdm files       /path/to/repo
+target/debug/openpdm meta        /path/to/repo path/to/part.stl
+target/debug/openpdm mesh        /path/to/repo path/to/part.stl
+target/debug/openpdm index       /path/to/repo
+target/debug/openpdm handlers
 ```
 
 ### Desktop app
@@ -104,7 +104,7 @@ pnpm tauri build      # release bundle
 
 Use **Open** to pick the folder of an existing project, or **New** to pick a
 folder and initialise a fresh git repository in it. The path box shows (and can
-still be edited to) the current project; it defaults to `/tmp/opendm-demo`.
+still be edited to) the current project; it defaults to `/tmp/openpdm-demo`.
 
 ### Packaging a standalone binary
 

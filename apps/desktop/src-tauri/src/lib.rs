@@ -88,7 +88,7 @@ fn mesh(path: String, file: String, rev: Option<String>) -> Result<Option<Mesh>,
 #[tauri::command]
 fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
     let project = open(&path)?;
-    let db = project.root().join(".opendm").join("index.pdmdb");
+    let db = project.root().join(".openpdm").join("index.pdmdb");
     let mut index = Index::open(&db).map_err(to_err)?;
     index.index(&project, limit).map_err(to_err)
 }

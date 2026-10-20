@@ -18,7 +18,7 @@
   } from "./lib/api";
   import Viewer from "./lib/Viewer.svelte";
 
-  let projectPath = $state("/tmp/opendm-demo");
+  let projectPath = $state("/tmp/openpdm-demo");
   let info = $state<ProjectInfo | null>(null);
   let revisions = $state<Revision[]>([]);
   let selectedRev = $state<string | null>(null);

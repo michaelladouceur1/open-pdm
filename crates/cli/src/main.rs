@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use open_pdm_core::{HandlerRegistry, Index, Project};
 
 #[derive(Parser)]
-#[command(name = "opendm", version, about = "OpenPDM CLI (first pass)")]
+#[command(name = "openpdm", version, about = "OpenPDM CLI (first pass)")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -184,7 +184,7 @@ fn handlers() -> Result<()> {
 
 fn index(repo: &PathBuf, db: Option<PathBuf>, limit: usize) -> Result<()> {
     let project = open(repo)?;
-    let db = db.unwrap_or_else(|| project.root().join(".opendm").join("index.pdmdb"));
+    let db = db.unwrap_or_else(|| project.root().join(".openpdm").join("index.pdmdb"));
     let mut index = Index::open(&db)?;
     let stats = index.index(&project, limit)?;
     println!("index:          {}", db.display());

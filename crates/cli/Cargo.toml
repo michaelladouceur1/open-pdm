@@ -7,7 +7,7 @@ repository.workspace = true
 description = "Command-line front-end for OpenPDM (first pass / demo)"
 
 [[bin]]
-name = "opendm"
+name = "openpdm"
 path = "src/main.rs"
 
 [dependencies]
