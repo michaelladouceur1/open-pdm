@@ -1,6 +1,15 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  ChevronRightIcon,
   CircleAlertIcon,
   DatabaseIcon,
   FolderOpenIcon,
@@ -63,6 +72,19 @@ function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
 
+// Smallest height either stacked section may be dragged to.
+const SECTION_MIN_HEIGHT = 96;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+// Remember the stacked-panel layout between launches.
+function storedHeight(key: string, fallback: number): number {
+  const saved = Number(localStorage.getItem(key));
+  return Number.isFinite(saved) && saved > 0 ? saved : fallback;
+}
+
 type Theme = "light" | "dark";
 
 function initialTheme(): Theme {
@@ -105,6 +127,39 @@ function StatRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+// Collapsible header for a stacked section. The whole row toggles the section.
+function SectionHeader({
+  title,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  title: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className="flex w-full shrink-0 items-center gap-2 px-3 pt-3 pb-2 text-left"
+    >
+      <ChevronRightIcon
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground transition-transform",
+          !collapsed && "rotate-90",
+        )}
+      />
+      <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        {title}
+      </h2>
+      {children}
+    </button>
+  );
+}
+
 export default function App() {
   const [projectPath, setProjectPath] = useState("/tmp/openpdm-demo");
   const [info, setInfo] = useState<ProjectInfo | null>(null);
@@ -118,6 +173,17 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [filesCollapsed, setFilesCollapsed] = useState(false);
+  const [revisionsCollapsed, setRevisionsCollapsed] = useState(false);
+  const [filesHeight, setFilesHeight] = useState(() =>
+    storedHeight("openpdm-files-height", 320),
+  );
+  const leftColumnRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    startY: number;
+    startHeight: number;
+    max: number;
+  } | null>(null);
 
   async function loadPath(path: string) {
     setError(null);
@@ -229,6 +295,54 @@ export default function App() {
     localStorage.setItem("openpdm-theme", theme);
   }, [theme]);
 
+  // Persist the height of the top (Files) section so it survives reloads.
+  useEffect(() => {
+    localStorage.setItem("openpdm-files-height", String(filesHeight));
+  }, [filesHeight]);
+
+  // Vertical drag handling for the divider between Files and Revisions.
+  function startResize(e: ReactPointerEvent<HTMLDivElement>) {
+    const column = leftColumnRef.current;
+    if (!column) return;
+    const rect = column.getBoundingClientRect();
+    dragRef.current = {
+      startY: e.clientY,
+      startHeight: filesHeight,
+      max: Math.max(SECTION_MIN_HEIGHT, rect.height - SECTION_MIN_HEIGHT),
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function resize(e: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const next = clamp(
+      drag.startHeight + (e.clientY - drag.startY),
+      SECTION_MIN_HEIGHT,
+      drag.max,
+    );
+    setFilesHeight(next);
+  }
+
+  function endResize(e: ReactPointerEvent<HTMLDivElement>) {
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  }
+
+  // Arrow keys nudge the divider for keyboard users.
+  function resizeWithKeyboard(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const step = (e.key === "ArrowUp" ? -1 : 1) * 16;
+    const column = leftColumnRef.current;
+    const max = column
+      ? Math.max(SECTION_MIN_HEIGHT, column.getBoundingClientRect().height - SECTION_MIN_HEIGHT)
+      : Number.POSITIVE_INFINITY;
+    setFilesHeight((height) => clamp(height + step, SECTION_MIN_HEIGHT, max));
+  }
+
   const themeLabel =
     theme === "light" ? "Switch to dark theme" : "Switch to light theme";
 
@@ -289,76 +403,122 @@ export default function App() {
           </div>
         )}
 
-        <main className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_minmax(240px,300px)_1fr]">
-          <aside className="flex min-h-0 flex-col border-r">
-            <div className="flex items-center justify-between px-3 pt-3 pb-2">
-              <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                Revisions
-              </h2>
-              {revisions.length > 0 && (
-                <Badge variant="secondary">{revisions.length}</Badge>
+        <main className="grid min-h-0 flex-1 grid-cols-[minmax(240px,320px)_1fr]">
+          <aside
+            ref={leftColumnRef}
+            className="flex min-h-0 flex-col border-r"
+          >
+            <section
+              className={cn(
+                "flex min-h-0 flex-col",
+                revisionsCollapsed ? "flex-1" : "shrink-0",
               )}
-            </div>
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="flex flex-col gap-1.5 px-3 pb-3">
-                {revisions.length === 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    No revisions. Open a repository above.
-                  </p>
+              style={
+                filesCollapsed || revisionsCollapsed
+                  ? undefined
+                  : {
+                      height: filesHeight,
+                      maxHeight: `calc(100% - ${SECTION_MIN_HEIGHT}px)`,
+                    }
+              }
+            >
+              <SectionHeader
+                title="Files"
+                collapsed={filesCollapsed}
+                onToggle={() => setFilesCollapsed((c) => !c)}
+              >
+                {selectedRev && (
+                  <Badge variant="outline" className="font-mono">
+                    @ {shortOid(selectedRev)}
+                  </Badge>
                 )}
-                {revisions.map((revision) => (
-                  <ListRow
-                    key={revision.oid}
-                    active={revision.oid === selectedRev}
-                    onClick={() => pickRevision(revision.oid)}
-                  >
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {revision.short}
-                    </span>
-                    <span className="line-clamp-2 text-[13px]">
-                      {revision.summary}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {revision.author} · {formatTime(revision.time)}
-                    </span>
-                  </ListRow>
-                ))}
-              </div>
-            </ScrollArea>
-          </aside>
+              </SectionHeader>
+              {!filesCollapsed && (
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="flex flex-col gap-1.5 px-3 pb-3">
+                    {files.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No files.</p>
+                    )}
+                    {files.map((file) => (
+                      <ListRow
+                        key={file.oid + file.path}
+                        active={selectedFile?.path === file.path}
+                        onClick={() => pickFile(file)}
+                      >
+                        <span className="text-[13px] break-all">{file.path}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {formatBytes(file.size)}
+                          {file.is_binary ? " · binary" : ""}
+                        </span>
+                      </ListRow>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </section>
 
-          <section className="flex min-h-0 flex-col border-r">
-            <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-              <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                Files
-              </h2>
-              {selectedRev && (
-                <Badge variant="outline" className="font-mono">
-                  @ {shortOid(selectedRev)}
-                </Badge>
-              )}
-            </div>
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="flex flex-col gap-1.5 px-3 pb-3">
-                {files.length === 0 && (
-                  <p className="text-xs text-muted-foreground">No files.</p>
-                )}
-                {files.map((file) => (
-                  <ListRow
-                    key={file.oid + file.path}
-                    active={selectedFile?.path === file.path}
-                    onClick={() => pickFile(file)}
-                  >
-                    <span className="text-[13px] break-all">{file.path}</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {formatBytes(file.size)}
-                      {file.is_binary ? " · binary" : ""}
-                    </span>
-                  </ListRow>
-                ))}
+            {!filesCollapsed && !revisionsCollapsed && (
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize Files and Revisions"
+                aria-valuenow={Math.round(filesHeight)}
+                tabIndex={0}
+                onPointerDown={startResize}
+                onPointerMove={resize}
+                onPointerUp={endResize}
+                onKeyDown={resizeWithKeyboard}
+                className="group flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center border-y bg-muted/40 select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+              >
+                <div className="h-0.5 w-8 rounded-full bg-border transition-colors group-hover:bg-primary/50" />
               </div>
-            </ScrollArea>
-          </section>
+            )}
+
+            <section
+              className={cn(
+                "flex min-h-0 flex-col",
+                revisionsCollapsed ? "shrink-0" : "flex-1",
+              )}
+            >
+              <SectionHeader
+                title="Revisions"
+                collapsed={revisionsCollapsed}
+                onToggle={() => setRevisionsCollapsed((c) => !c)}
+              >
+                {revisions.length > 0 && (
+                  <Badge variant="secondary">{revisions.length}</Badge>
+                )}
+              </SectionHeader>
+              {!revisionsCollapsed && (
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="flex flex-col gap-1.5 px-3 pb-3">
+                    {revisions.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No revisions. Open a repository above.
+                      </p>
+                    )}
+                    {revisions.map((revision) => (
+                      <ListRow
+                        key={revision.oid}
+                        active={revision.oid === selectedRev}
+                        onClick={() => pickRevision(revision.oid)}
+                      >
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {revision.short}
+                        </span>
+                        <span className="line-clamp-2 text-[13px]">
+                          {revision.summary}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {revision.author} · {formatTime(revision.time)}
+                        </span>
+                      </ListRow>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </section>
+          </aside>
 
           <section className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
             {selectedFile ? (
