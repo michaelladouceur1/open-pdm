@@ -42,19 +42,38 @@
     grid.rotation.x = Math.PI / 2; // Lay the grid flat in the Z-up plane.
     scene.add(grid);
 
+    // Keep the drawing buffer and camera in sync with the container's CSS box.
+    // The canvas's CSS box is pinned to the container (stylesheet + the inline
+    // style set here), so the element always fills it; this only has to keep
+    // the render resolution and camera aspect correct.
+    let lastW = 0;
+    let lastH = 0;
     const resize = () => {
-      const w = container.clientWidth;
+      const w = Math.max(container.clientWidth, 1);
       const h = Math.max(container.clientHeight, 1);
-      // Let three.js set the canvas CSS size as well as its drawing buffer;
-      // with updateStyle=false the HiDPI buffer makes the canvas lay out at
-      // devicePixelRatio× the container and get clipped.
-      renderer.setSize(w, h);
+      if (w === lastW && h === lastH) return;
+      lastW = w;
+      lastH = h;
+      // `updateStyle = false`: size the buffer only, never three's inline px.
+      renderer.setSize(w, h, false);
+      renderer.domElement.style.width = "100%";
+      renderer.domElement.style.height = "100%";
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     };
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(container);
+    // Re-measure over the first few frames: in dev the component CSS is
+    // injected asynchronously, so the container can still be settling when we
+    // mount (which is why the first frame could otherwise stay half-width).
+    let settleRaf = 0;
+    let settleFrames = 0;
+    const settle = () => {
+      resize();
+      if (settleFrames++ < 10) settleRaf = requestAnimationFrame(settle);
+    };
+    settleRaf = requestAnimationFrame(settle);
 
     const animate = () => {
       raf = requestAnimationFrame(animate);
@@ -67,6 +86,7 @@
     return () => {
       ready = false;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(settleRaf);
       observer.disconnect();
       controls.dispose();
       renderer.dispose();
@@ -114,14 +134,20 @@
 
 <style>
   .viewer {
-    width: 100%;
-    height: 100%;
-    min-height: 320px;
+    /* Pin to the (positioned) viewport box so it always fills it, independent
+       of flex/percentage-height resolution quirks across engines. */
+    position: absolute;
+    inset: 0;
     background: #181a20;
-    border-radius: 8px;
     overflow: hidden;
   }
+  /* Pin the canvas to the container instead of relying on three.js's inline
+     style sizing, so it always fills the box at any devicePixelRatio. */
   .viewer :global(canvas) {
     display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
 </style>

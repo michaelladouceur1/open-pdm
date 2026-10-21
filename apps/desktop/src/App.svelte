@@ -338,6 +338,8 @@
   }
   .detail {
     border-right: none;
+    display: flex;
+    flex-direction: column;
   }
 
   h2 {
@@ -415,7 +417,12 @@
   }
 
   .viewport {
-    height: 360px;
+    /* Grow to fill the detail column, leaving room for the metadata above and
+       the Index stats below when they are shown. `position: relative` lets the
+       child Viewer pin itself to this box (see Viewer.svelte). */
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 320px;
     border: 1px solid #262a34;
     border-radius: 8px;
     overflow: hidden;
