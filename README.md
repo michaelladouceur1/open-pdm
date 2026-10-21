@@ -18,7 +18,7 @@ repository through to a live 3D preview.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII) and OBJ (mesh + metadata),
   with a generic fallback for everything else.
-- **Desktop app (Tauri v2 + Svelte + three.js)** — browse revisions and files,
+- **Desktop app (Tauri v2 + React + three.js)** — browse revisions and files,
   inspect extracted metadata, and preview meshes in a 3D viewport.
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
@@ -29,7 +29,7 @@ providers, thumbnails.
 ## Architecture
 
 ```
-┌─ Svelte + TypeScript + three.js (webview UI) ─────────┐
+┌─ React + TypeScript + three.js (webview UI) ──────────┐
 │  revisions · files · metadata · 3D viewer             │
 └───────────────▲───────────────────────────────────────┘
       typed IPC │ (@tauri-apps/api invoke)
@@ -52,7 +52,7 @@ Design constraints baked in from the start:
 ```
 crates/core/            Rust core: git, index, handlers, mesh
 crates/cli/             `openpdm` demo CLI
-apps/desktop/           Tauri v2 app (Svelte + three.js frontend)
+apps/desktop/           Tauri v2 app (React + three.js frontend)
 apps/desktop/src-tauri/ Tauri host (thin IPC wrapper over core)
 ```
 

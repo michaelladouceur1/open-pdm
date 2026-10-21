@@ -1,7 +1,7 @@
 //! Tauri host for the OpenPDM desktop app.
 //!
 //! The host is deliberately thin: it exposes the core (git history, file
-//! metadata, tessellation, indexing, repository creation) to the Svelte
+//! metadata, tessellation, indexing, repository creation) to the React
 //! frontend over typed IPC commands. Content writes, LFS and lock operations
 //! are intentionally out of scope for this first pass.
 
