@@ -12,6 +12,10 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# FreeCAD `.FCStd` support: the format is a ZIP container holding a
+# `Document.xml` manifest plus per-shape B-rep (`.brp`) payloads.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
 
 [dev-dependencies]
 tempfile = "3"

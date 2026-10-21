@@ -5,6 +5,7 @@
 //! frontend over typed IPC commands. Content writes, LFS and lock operations
 //! are intentionally out of scope for this first pass.
 
+use base64::Engine as _;
 use open_pdm_core::{
     FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project, Revision,
 };
@@ -85,6 +86,43 @@ fn mesh(path: String, file: String, rev: Option<String>) -> Result<Option<Mesh>,
     registry.resolve(&file).mesh(&file, &bytes).map_err(to_err)
 }
 
+/// A raw shape payload sent to the viewer for client-side tessellation.
+///
+/// The bytes are base64-encoded because Tauri serialises command results as
+/// JSON, where a `Vec<u8>` would inflate to one number per byte.
+#[derive(Serialize)]
+struct ShapePayloadDto {
+    name: String,
+    format: String,
+    data: String,
+}
+
+/// Raw B-rep shape payloads (e.g. from a FreeCAD `.FCStd`) for the viewer to
+/// tessellate with `occt-import-js`. Empty for formats that produce a mesh
+/// directly (see [`mesh`]).
+#[tauri::command]
+fn shape_payloads(
+    path: String,
+    file: String,
+    rev: Option<String>,
+) -> Result<Vec<ShapePayloadDto>, String> {
+    let project = open(&path)?;
+    let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
+    let registry = HandlerRegistry::builtin();
+    let payloads = registry
+        .resolve(&file)
+        .shape_payloads(&file, &bytes)
+        .map_err(to_err)?;
+    Ok(payloads
+        .into_iter()
+        .map(|payload| ShapePayloadDto {
+            name: payload.name,
+            format: payload.format,
+            data: base64::engine::general_purpose::STANDARD.encode(payload.data),
+        })
+        .collect())
+}
+
 #[tauri::command]
 fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
     let project = open(&path)?;
@@ -104,6 +142,7 @@ pub fn run() {
             files,
             metadata,
             mesh,
+            shape_payloads,
             index_project
         ])
         .run(tauri::generate_context!())

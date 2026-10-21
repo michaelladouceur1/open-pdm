@@ -46,6 +46,14 @@ enum Command {
         rev: Option<String>,
     },
 
+    /// List the raw shape payloads a viewer can tessellate (e.g. FreeCAD shapes).
+    Shapes {
+        repo: PathBuf,
+        path: String,
+        #[arg(long)]
+        rev: Option<String>,
+    },
+
     /// List the registered CAD handlers.
     Handlers,
 
@@ -67,6 +75,7 @@ fn main() -> Result<()> {
         Command::Files { repo, rev } => files(&repo, rev.as_deref()),
         Command::Meta { repo, path, rev } => meta(&repo, &path, rev.as_deref()),
         Command::Mesh { repo, path, rev } => mesh(&repo, &path, rev.as_deref()),
+        Command::Shapes { repo, path, rev } => shapes(&repo, &path, rev.as_deref()),
         Command::Handlers => handlers(),
         Command::Index { repo, db, limit } => index(&repo, db, limit),
     }
@@ -164,6 +173,28 @@ fn mesh(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
             println!("volume:    {:.4}", mesh.volume());
         }
         None => println!("handler '{}' does not produce a mesh", handler.name()),
+    }
+    Ok(())
+}
+
+fn shapes(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
+    let project = open(repo)?;
+    let bytes = project.blob(rev, path)?;
+    let registry = HandlerRegistry::builtin();
+    let handler = registry.resolve(path);
+    let payloads = handler.shape_payloads(path, &bytes)?;
+    if payloads.is_empty() {
+        println!("handler '{}' provides no shape payloads", handler.name());
+        return Ok(());
+    }
+    println!("handler: {}", handler.name());
+    for payload in payloads {
+        println!(
+            "  {:<24} {:<6} {} bytes",
+            payload.name,
+            payload.format,
+            payload.data.len()
+        );
     }
     Ok(())
 }

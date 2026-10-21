@@ -34,6 +34,7 @@ import {
   getMesh,
   getMetadata,
   getRevisions,
+  getShapePayloads,
   indexProject,
   openProject,
   type FileEntry,
@@ -184,6 +185,8 @@ export default function App() {
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // True while a file's preview is being produced (e.g. B-rep tessellation).
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => getStored("theme", "light"));
   const [filesCollapsed, setFilesCollapsed] = useState(() => getStored("filesCollapsed", false));
   const [revisionsCollapsed, setRevisionsCollapsed] = useState(() => getStored("revisionsCollapsed", false));
@@ -191,6 +194,9 @@ export default function App() {
   const [filesView, setFilesView] = useState<ViewMode>(() => getStored("filesView", "detailed"));
   const [revisionsView, setRevisionsView] = useState<ViewMode>(() => getStored("revisionsView", "detailed"));
   const leftColumnRef = useRef<HTMLDivElement>(null);
+  // Monotonic id for the in-flight preview request, so a slow tessellation of a
+  // previously selected file can never overwrite a newer selection.
+  const previewRequestRef = useRef(0);
   const dragRef = useRef<{
     startY: number;
     startHeightPct: number;
@@ -212,6 +218,8 @@ export default function App() {
       setSelectedFile(null);
       setMetadata(null);
       setMesh(null);
+      setPreviewLoading(false);
+      previewRequestRef.current += 1;
     } catch (e) {
       setError(String(e));
       setInfo(null);
@@ -258,6 +266,8 @@ export default function App() {
     setSelectedFile(null);
     setMetadata(null);
     setMesh(null);
+    setPreviewLoading(false);
+    previewRequestRef.current += 1;
   }
 
   async function pickRevision(oid: string) {
@@ -271,15 +281,36 @@ export default function App() {
   }
 
   async function pickFile(file: FileEntry) {
+    const requestId = (previewRequestRef.current += 1);
     setSelectedFile(file);
     setMetadata(null);
     setMesh(null);
     setError(null);
+    setPreviewLoading(true);
     try {
-      setMetadata(await getMetadata(projectPath, file.path, selectedRev));
-      setMesh(await getMesh(projectPath, file.path, selectedRev));
+      const nextMetadata = await getMetadata(projectPath, file.path, selectedRev);
+      if (requestId !== previewRequestRef.current) return;
+      setMetadata(nextMetadata);
+
+      // B-rep documents (e.g. FreeCAD .FCStd) carry exact shapes rather than
+      // triangles; tessellate them in the webview with occt-import-js. The
+      // module is imported dynamically so the wasm loads only when needed.
+      let nextMesh: Mesh | null;
+      if (nextMetadata.attributes.tessellation === "brep") {
+        const payloads = await getShapePayloads(projectPath, file.path, selectedRev);
+        const { tessellateBrep } = await import("@/lib/occt");
+        nextMesh = await tessellateBrep(payloads);
+      } else {
+        nextMesh = await getMesh(projectPath, file.path, selectedRev);
+      }
+
+      if (requestId !== previewRequestRef.current) return;
+      setMesh(nextMesh);
     } catch (e) {
+      if (requestId !== previewRequestRef.current) return;
       setError(String(e));
+    } finally {
+      if (requestId === previewRequestRef.current) setPreviewLoading(false);
     }
   }
 
@@ -594,9 +625,16 @@ export default function App() {
                   {mesh && mesh.indices.length > 0 ? (
                     <Viewer positions={mesh.positions} indices={mesh.indices} theme={theme} />
                   ) : (
-                    <p className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
-                      No preview available for this format.
-                    </p>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                      {previewLoading ? (
+                        <>
+                          <Spinner className="size-4" />
+                          Building preview…
+                        </>
+                      ) : (
+                        "No preview available for this format."
+                      )}
+                    </div>
                   )}
                 </div>
               </>

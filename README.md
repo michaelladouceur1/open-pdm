@@ -16,16 +16,17 @@ repository through to a live 3D preview.
   git blob oid, so identical content is stored once per revision _and_ across
   repositories. Fully rebuildable from git; never committed.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
-  `CadHandler` trait. Built-ins: STL (binary + ASCII) and OBJ (mesh + metadata),
-  with a generic fallback for everything else.
+  `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata) and
+  FreeCAD `.FCStd` (document metadata + B-rep shapes), with a generic fallback
+  for everything else.
 - **Desktop app (Tauri v2 + React + Tailwind + shadcn/ui + three.js)** — browse
   revisions and files, inspect extracted metadata, and preview meshes in a 3D
-  viewport.
+  viewport. FreeCAD B-rep shapes are tessellated in the webview with
+  `occt-import-js` (OpenCASCADE in WebAssembly).
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
 Not yet implemented (by design, see the plan): writes, `git-lfs` transfer and
-locking, STEP/IGES tessellation (`occt-import-js`), sidecar handlers, remote
-providers, thumbnails.
+locking, STEP/IGES tessellation, sidecar handlers, remote providers, thumbnails.
 
 ## Architecture
 
@@ -90,6 +91,7 @@ target/debug/openpdm revisions   /path/to/repo -n 20
 target/debug/openpdm files       /path/to/repo
 target/debug/openpdm meta        /path/to/repo path/to/part.stl
 target/debug/openpdm mesh        /path/to/repo path/to/part.stl
+target/debug/openpdm shapes      /path/to/repo path/to/document.FCStd
 target/debug/openpdm index       /path/to/repo
 target/debug/openpdm handlers
 ```
@@ -140,12 +142,26 @@ pub trait CadHandler: Send + Sync {
     fn extensions(&self) -> &'static [&'static str];
     fn metadata(&self, path: &str, bytes: &[u8]) -> Result<FileMetadata>;
     fn mesh(&self, path: &str, bytes: &[u8]) -> Result<Option<Mesh>>;
+    // Optional: raw shapes for client-side tessellation (defaults to none).
+    fn shape_payloads(&self, path: &str, bytes: &[u8]) -> Result<Vec<ShapePayload>>;
 }
 ```
 
 Adding a format means implementing this trait and registering it; the core and
 UI do not change. Proprietary formats (SolidWorks, Inventor, …) are intended to
 be handled later via a sidecar/JSON-RPC adapter rather than in-process parsing.
+
+### FreeCAD documents (`.FCStd`)
+
+A `.FCStd` file is a ZIP container: `Document.xml` is the manifest (document
+metadata, objects and their properties), and each shape-bearing object stores its
+exact geometry as an OpenCASCADE B-rep (`*.brp`). That is *not* a triangle mesh,
+and the core deliberately has no geometry kernel, so the handler reports rich
+metadata and advertises `tessellation = brep`, then exposes the raw `.brp`
+payloads through `shape_payloads`. The desktop viewer feeds them to
+`occt-import-js`, which tessellates in the webview; the wasm is loaded lazily, on
+the first B-rep preview. Assemblies that only link to external parts carry no
+embedded shapes and therefore have no 3D preview.
 
 ## License
 
