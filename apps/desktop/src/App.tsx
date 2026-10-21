@@ -15,6 +15,8 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   MoonIcon,
+  Rows2Icon,
+  Rows4Icon,
   SunIcon,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -75,6 +77,8 @@ function shortOid(oid: string): string {
 // Smallest height either stacked section may be dragged to.
 const SECTION_MIN_HEIGHT = 96;
 
+type ViewMode = "detailed" | "compact";
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -85,6 +89,11 @@ function storedHeight(key: string, fallback: number): number {
   return Number.isFinite(saved) && saved > 0 ? saved : fallback;
 }
 
+function storedViewMode(key: string, fallback: ViewMode): ViewMode {
+  const saved = localStorage.getItem(key);
+  return saved === "compact" || saved === "detailed" ? saved : fallback;
+}
+
 type Theme = "light" | "dark";
 
 function initialTheme(): Theme {
@@ -92,14 +101,17 @@ function initialTheme(): Theme {
   return saved === "dark" ? "dark" : "light";
 }
 
-// A selectable list row, used for both revisions and files.
+// A selectable list row, used for both revisions and files. Rows stack their
+// contents in "detailed" mode and collapse to a single line in "compact" mode.
 function ListRow({
   active,
   onClick,
+  compact = false,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  compact?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -107,7 +119,8 @@ function ListRow({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full flex-col items-start gap-0.5 rounded-lg border px-2.5 py-2 text-left transition-colors",
+        "flex w-full rounded-lg border text-left transition-colors",
+        compact ? "flex-row items-center gap-2 px-2.5 py-1" : "flex-col items-start gap-0.5 px-2.5 py-2",
         active
           ? "border-primary/40 bg-accent text-accent-foreground"
           : "border-transparent bg-muted/40 hover:bg-muted",
@@ -160,6 +173,39 @@ function SectionHeader({
   );
 }
 
+// Container for per-section actions, rendered just below the section header.
+function SectionActions({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-1 px-3 pb-2 text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+// Icon button that flips a section between detailed and compact rows.
+function ViewModeButton({
+  mode,
+  onToggle,
+}: {
+  mode: ViewMode;
+  onToggle: () => void;
+}) {
+  const detailed = mode === "detailed";
+  const label = detailed ? "Switch to compact view" : "Switch to detailed view";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        className={cn(buttonVariants({ variant: "ghost", size: "icon-xs" }))}
+        onClick={onToggle}
+        aria-label={label}
+      >
+        {detailed ? <Rows2Icon /> : <Rows4Icon />}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export default function App() {
   const [projectPath, setProjectPath] = useState("/tmp/openpdm-demo");
   const [info, setInfo] = useState<ProjectInfo | null>(null);
@@ -177,6 +223,12 @@ export default function App() {
   const [revisionsCollapsed, setRevisionsCollapsed] = useState(false);
   const [filesHeight, setFilesHeight] = useState(() =>
     storedHeight("openpdm-files-height", 320),
+  );
+  const [filesView, setFilesView] = useState<ViewMode>(() =>
+    storedViewMode("openpdm-files-view", "detailed"),
+  );
+  const [revisionsView, setRevisionsView] = useState<ViewMode>(() =>
+    storedViewMode("openpdm-revisions-view", "detailed"),
   );
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
@@ -299,6 +351,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("openpdm-files-height", String(filesHeight));
   }, [filesHeight]);
+
+  // Persist each section's view mode.
+  useEffect(() => {
+    localStorage.setItem("openpdm-files-view", filesView);
+  }, [filesView]);
+
+  useEffect(() => {
+    localStorage.setItem("openpdm-revisions-view", revisionsView);
+  }, [revisionsView]);
 
   // Vertical drag handling for the divider between Files and Revisions.
   function startResize(e: ReactPointerEvent<HTMLDivElement>) {
@@ -433,25 +494,53 @@ export default function App() {
                   </Badge>
                 )}
               </SectionHeader>
+              <SectionActions>
+                <ViewModeButton
+                  mode={filesView}
+                  onToggle={() =>
+                    setFilesView((m) =>
+                      m === "detailed" ? "compact" : "detailed",
+                    )
+                  }
+                />
+              </SectionActions>
               {!filesCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
                     {files.length === 0 && (
                       <p className="text-xs text-muted-foreground">No files.</p>
                     )}
-                    {files.map((file) => (
-                      <ListRow
-                        key={file.oid + file.path}
-                        active={selectedFile?.path === file.path}
-                        onClick={() => pickFile(file)}
-                      >
-                        <span className="text-[13px] break-all">{file.path}</span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {formatBytes(file.size)}
-                          {file.is_binary ? " · binary" : ""}
-                        </span>
-                      </ListRow>
-                    ))}
+                    {files.map((file) =>
+                      filesView === "compact" ? (
+                        <ListRow
+                          key={file.oid + file.path}
+                          compact
+                          active={selectedFile?.path === file.path}
+                          onClick={() => pickFile(file)}
+                        >
+                          <span className="min-w-0 flex-1 truncate text-[13px]">
+                            {file.path}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {formatBytes(file.size)}
+                          </span>
+                        </ListRow>
+                      ) : (
+                        <ListRow
+                          key={file.oid + file.path}
+                          active={selectedFile?.path === file.path}
+                          onClick={() => pickFile(file)}
+                        >
+                          <span className="text-[13px] break-all">
+                            {file.path}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {formatBytes(file.size)}
+                            {file.is_binary ? " · binary" : ""}
+                          </span>
+                        </ListRow>
+                      ),
+                    )}
                   </div>
                 </ScrollArea>
               )}
@@ -489,6 +578,16 @@ export default function App() {
                   <Badge variant="secondary">{revisions.length}</Badge>
                 )}
               </SectionHeader>
+              <SectionActions>
+                <ViewModeButton
+                  mode={revisionsView}
+                  onToggle={() =>
+                    setRevisionsView((m) =>
+                      m === "detailed" ? "compact" : "detailed",
+                    )
+                  }
+                />
+              </SectionActions>
               {!revisionsCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
@@ -497,23 +596,42 @@ export default function App() {
                         No revisions. Open a repository above.
                       </p>
                     )}
-                    {revisions.map((revision) => (
-                      <ListRow
-                        key={revision.oid}
-                        active={revision.oid === selectedRev}
-                        onClick={() => pickRevision(revision.oid)}
-                      >
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {revision.short}
-                        </span>
-                        <span className="line-clamp-2 text-[13px]">
-                          {revision.summary}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {revision.author} · {formatTime(revision.time)}
-                        </span>
-                      </ListRow>
-                    ))}
+                    {revisions.map((revision) =>
+                      revisionsView === "compact" ? (
+                        <ListRow
+                          key={revision.oid}
+                          compact
+                          active={revision.oid === selectedRev}
+                          onClick={() => pickRevision(revision.oid)}
+                        >
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                            {revision.short}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[13px]">
+                            {revision.summary}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {formatTime(revision.time)}
+                          </span>
+                        </ListRow>
+                      ) : (
+                        <ListRow
+                          key={revision.oid}
+                          active={revision.oid === selectedRev}
+                          onClick={() => pickRevision(revision.oid)}
+                        >
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {revision.short}
+                          </span>
+                          <span className="line-clamp-2 text-[13px]">
+                            {revision.summary}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {revision.author} · {formatTime(revision.time)}
+                          </span>
+                        </ListRow>
+                      ),
+                    )}
                   </div>
                 </ScrollArea>
               )}
