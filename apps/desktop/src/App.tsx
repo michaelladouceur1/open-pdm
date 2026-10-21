@@ -27,12 +27,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   createProject,
   getFiles,
@@ -48,6 +43,7 @@ import {
   type ProjectInfo,
   type Revision,
 } from "@/lib/api";
+import { getStored, setStored, type StoreValues } from "@/lib/localStore";
 import { cn } from "@/lib/utils";
 import Viewer from "@/lib/Viewer";
 
@@ -74,31 +70,18 @@ function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
 
-// Smallest height either stacked section may be dragged to.
+// Smallest height either stacked section may be dragged to, in pixels.
 const SECTION_MIN_HEIGHT = 96;
 
-type ViewMode = "detailed" | "compact";
+// Default share of the left column given to the Files section, as a percentage.
+const SECTION_DEFAULT_HEIGHT_PCT = 40;
+
+type ViewMode = StoreValues["filesView"] | StoreValues["revisionsView"];
+
+type Theme = StoreValues["theme"];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-// Remember the stacked-panel layout between launches.
-function storedHeight(key: string, fallback: number): number {
-  const saved = Number(localStorage.getItem(key));
-  return Number.isFinite(saved) && saved > 0 ? saved : fallback;
-}
-
-function storedViewMode(key: string, fallback: ViewMode): ViewMode {
-  const saved = localStorage.getItem(key);
-  return saved === "compact" || saved === "detailed" ? saved : fallback;
-}
-
-type Theme = "light" | "dark";
-
-function initialTheme(): Theme {
-  const saved = localStorage.getItem("openpdm-theme");
-  return saved === "dark" ? "dark" : "light";
 }
 
 // A selectable list row, used for both revisions and files. Rows stack their
@@ -121,9 +104,7 @@ function ListRow({
       className={cn(
         "flex w-full rounded-lg border text-left transition-colors",
         compact ? "flex-row items-center gap-2 px-2.5 py-1" : "flex-col items-start gap-0.5 px-2.5 py-2",
-        active
-          ? "border-primary/40 bg-accent text-accent-foreground"
-          : "border-transparent bg-muted/40 hover:bg-muted",
+        active ? "border-primary/40 bg-accent text-accent-foreground" : "border-transparent bg-muted/40 hover:bg-muted",
       )}
     >
       {children}
@@ -160,14 +141,9 @@ function SectionHeader({
       className="flex w-full shrink-0 items-center gap-2 px-3 pt-3 pb-2 text-left"
     >
       <ChevronRightIcon
-        className={cn(
-          "size-3.5 shrink-0 text-muted-foreground transition-transform",
-          !collapsed && "rotate-90",
-        )}
+        className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", !collapsed && "rotate-90")}
       />
-      <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-        {title}
-      </h2>
+      <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
       {children}
     </button>
   );
@@ -175,21 +151,11 @@ function SectionHeader({
 
 // Container for per-section actions, rendered just below the section header.
 function SectionActions({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex items-center gap-1 px-3 pb-2 text-muted-foreground">
-      {children}
-    </div>
-  );
+  return <div className="flex items-center gap-1 px-3 pb-2 text-muted-foreground">{children}</div>;
 }
 
 // Icon button that flips a section between detailed and compact rows.
-function ViewModeButton({
-  mode,
-  onToggle,
-}: {
-  mode: ViewMode;
-  onToggle: () => void;
-}) {
+function ViewModeButton({ mode, onToggle }: { mode: ViewMode; onToggle: () => void }) {
   const detailed = mode === "detailed";
   const label = detailed ? "Switch to compact view" : "Switch to detailed view";
   return (
@@ -218,23 +184,18 @@ export default function App() {
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [filesCollapsed, setFilesCollapsed] = useState(false);
-  const [revisionsCollapsed, setRevisionsCollapsed] = useState(false);
-  const [filesHeight, setFilesHeight] = useState(() =>
-    storedHeight("openpdm-files-height", 320),
-  );
-  const [filesView, setFilesView] = useState<ViewMode>(() =>
-    storedViewMode("openpdm-files-view", "detailed"),
-  );
-  const [revisionsView, setRevisionsView] = useState<ViewMode>(() =>
-    storedViewMode("openpdm-revisions-view", "detailed"),
-  );
+  const [theme, setTheme] = useState<Theme>(() => getStored("theme", "light"));
+  const [filesCollapsed, setFilesCollapsed] = useState(() => getStored("filesCollapsed", false));
+  const [revisionsCollapsed, setRevisionsCollapsed] = useState(() => getStored("revisionsCollapsed", false));
+  const [filesHeightPct, setFilesHeightPct] = useState(() => getStored("filesHeightPct", SECTION_DEFAULT_HEIGHT_PCT));
+  const [filesView, setFilesView] = useState<ViewMode>(() => getStored("filesView", "detailed"));
+  const [revisionsView, setRevisionsView] = useState<ViewMode>(() => getStored("revisionsView", "detailed"));
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     startY: number;
-    startHeight: number;
-    max: number;
+    startHeightPct: number;
+    minPct: number;
+    maxPct: number;
   } | null>(null);
 
   async function loadPath(path: string) {
@@ -344,45 +305,53 @@ export default function App() {
   // remember the choice for the next launch.
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem("openpdm-theme", theme);
+    setStored("theme", theme);
   }, [theme]);
 
-  // Persist the height of the top (Files) section so it survives reloads.
+  // Persist the stacked-panel layout so heights, collapsed state and view modes
+  // all survive reloads.
   useEffect(() => {
-    localStorage.setItem("openpdm-files-height", String(filesHeight));
-  }, [filesHeight]);
+    setStored("filesHeightPct", filesHeightPct);
+  }, [filesHeightPct]);
 
-  // Persist each section's view mode.
   useEffect(() => {
-    localStorage.setItem("openpdm-files-view", filesView);
+    setStored("filesCollapsed", filesCollapsed);
+  }, [filesCollapsed]);
+
+  useEffect(() => {
+    setStored("revisionsCollapsed", revisionsCollapsed);
+  }, [revisionsCollapsed]);
+
+  useEffect(() => {
+    setStored("filesView", filesView);
   }, [filesView]);
 
   useEffect(() => {
-    localStorage.setItem("openpdm-revisions-view", revisionsView);
+    setStored("revisionsView", revisionsView);
   }, [revisionsView]);
 
-  // Vertical drag handling for the divider between Files and Revisions.
+  // Vertical drag handling for the divider between Files and Revisions. The
+  // section height is kept as a percentage of the column so the split scales
+  // with the window.
   function startResize(e: ReactPointerEvent<HTMLDivElement>) {
     const column = leftColumnRef.current;
     if (!column) return;
-    const rect = column.getBoundingClientRect();
+    const minPct = (SECTION_MIN_HEIGHT / column.getBoundingClientRect().height) * 100;
     dragRef.current = {
       startY: e.clientY,
-      startHeight: filesHeight,
-      max: Math.max(SECTION_MIN_HEIGHT, rect.height - SECTION_MIN_HEIGHT),
+      startHeightPct: filesHeightPct,
+      minPct,
+      maxPct: 100 - minPct,
     };
     e.currentTarget.setPointerCapture(e.pointerId);
   }
 
   function resize(e: ReactPointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
-    if (!drag) return;
-    const next = clamp(
-      drag.startHeight + (e.clientY - drag.startY),
-      SECTION_MIN_HEIGHT,
-      drag.max,
-    );
-    setFilesHeight(next);
+    const column = leftColumnRef.current;
+    if (!drag || !column) return;
+    const deltaPct = ((e.clientY - drag.startY) / column.getBoundingClientRect().height) * 100;
+    setFilesHeightPct(clamp(drag.startHeightPct + deltaPct, drag.minPct, drag.maxPct));
   }
 
   function endResize(e: ReactPointerEvent<HTMLDivElement>) {
@@ -396,24 +365,21 @@ export default function App() {
   function resizeWithKeyboard(e: ReactKeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();
-    const step = (e.key === "ArrowUp" ? -1 : 1) * 16;
     const column = leftColumnRef.current;
-    const max = column
-      ? Math.max(SECTION_MIN_HEIGHT, column.getBoundingClientRect().height - SECTION_MIN_HEIGHT)
-      : Number.POSITIVE_INFINITY;
-    setFilesHeight((height) => clamp(height + step, SECTION_MIN_HEIGHT, max));
+    if (!column) return;
+    const { height } = column.getBoundingClientRect();
+    const minPct = (SECTION_MIN_HEIGHT / height) * 100;
+    const step = ((e.key === "ArrowUp" ? -1 : 1) * 16 * 100) / height;
+    setFilesHeightPct((pct) => clamp(pct + step, minPct, 100 - minPct));
   }
 
-  const themeLabel =
-    theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+  const themeLabel = theme === "light" ? "Switch to dark theme" : "Switch to light theme";
 
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background text-foreground">
         <header className="flex items-center gap-2 border-b bg-card px-3 py-2">
-          <div className="px-1 text-sm font-semibold tracking-wide text-primary">
-            OpenPDM
-          </div>
+          <div className="px-1 text-sm font-semibold tracking-wide text-primary">OpenPDM</div>
           <Separator orientation="vertical" className="mx-0.5 h-5" />
           <Input
             className="h-8 min-w-0 flex-1 font-mono"
@@ -457,37 +423,25 @@ export default function App() {
             <Alert variant="destructive">
               <CircleAlertIcon />
               <AlertTitle>Something went wrong</AlertTitle>
-              <AlertDescription className="font-mono text-xs break-all">
-                {error}
-              </AlertDescription>
+              <AlertDescription className="font-mono text-xs break-all">{error}</AlertDescription>
             </Alert>
           </div>
         )}
 
         <main className="grid min-h-0 flex-1 grid-cols-[minmax(240px,320px)_1fr]">
-          <aside
-            ref={leftColumnRef}
-            className="flex min-h-0 flex-col border-r"
-          >
+          <aside ref={leftColumnRef} className="flex min-h-0 flex-col border-r">
             <section
-              className={cn(
-                "flex min-h-0 flex-col",
-                revisionsCollapsed ? "flex-1" : "shrink-0",
-              )}
+              className={cn("flex min-h-0 flex-col", revisionsCollapsed ? "flex-1" : "shrink-0")}
               style={
                 filesCollapsed || revisionsCollapsed
                   ? undefined
                   : {
-                      height: filesHeight,
+                      height: `${filesHeightPct}%`,
                       maxHeight: `calc(100% - ${SECTION_MIN_HEIGHT}px)`,
                     }
               }
             >
-              <SectionHeader
-                title="Files"
-                collapsed={filesCollapsed}
-                onToggle={() => setFilesCollapsed((c) => !c)}
-              >
+              <SectionHeader title="Files" collapsed={filesCollapsed} onToggle={() => setFilesCollapsed((c) => !c)}>
                 {selectedRev && (
                   <Badge variant="outline" className="font-mono">
                     @ {shortOid(selectedRev)}
@@ -497,19 +451,13 @@ export default function App() {
               <SectionActions>
                 <ViewModeButton
                   mode={filesView}
-                  onToggle={() =>
-                    setFilesView((m) =>
-                      m === "detailed" ? "compact" : "detailed",
-                    )
-                  }
+                  onToggle={() => setFilesView((m) => (m === "detailed" ? "compact" : "detailed"))}
                 />
               </SectionActions>
               {!filesCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
-                    {files.length === 0 && (
-                      <p className="text-xs text-muted-foreground">No files.</p>
-                    )}
+                    {files.length === 0 && <p className="text-xs text-muted-foreground">No files.</p>}
                     {files.map((file) =>
                       filesView === "compact" ? (
                         <ListRow
@@ -518,12 +466,8 @@ export default function App() {
                           active={selectedFile?.path === file.path}
                           onClick={() => pickFile(file)}
                         >
-                          <span className="min-w-0 flex-1 truncate text-[13px]">
-                            {file.path}
-                          </span>
-                          <span className="shrink-0 text-[11px] text-muted-foreground">
-                            {formatBytes(file.size)}
-                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[13px]">{file.path}</span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(file.size)}</span>
                         </ListRow>
                       ) : (
                         <ListRow
@@ -531,9 +475,7 @@ export default function App() {
                           active={selectedFile?.path === file.path}
                           onClick={() => pickFile(file)}
                         >
-                          <span className="text-[13px] break-all">
-                            {file.path}
-                          </span>
+                          <span className="text-[13px] break-all">{file.path}</span>
                           <span className="text-[11px] text-muted-foreground">
                             {formatBytes(file.size)}
                             {file.is_binary ? " · binary" : ""}
@@ -551,7 +493,7 @@ export default function App() {
                 role="separator"
                 aria-orientation="horizontal"
                 aria-label="Resize Files and Revisions"
-                aria-valuenow={Math.round(filesHeight)}
+                aria-valuenow={Math.round(filesHeightPct)}
                 tabIndex={0}
                 onPointerDown={startResize}
                 onPointerMove={resize}
@@ -563,38 +505,25 @@ export default function App() {
               </div>
             )}
 
-            <section
-              className={cn(
-                "flex min-h-0 flex-col",
-                revisionsCollapsed ? "shrink-0" : "flex-1",
-              )}
-            >
+            <section className={cn("flex min-h-0 flex-col", revisionsCollapsed ? "shrink-0" : "flex-1")}>
               <SectionHeader
                 title="Revisions"
                 collapsed={revisionsCollapsed}
                 onToggle={() => setRevisionsCollapsed((c) => !c)}
               >
-                {revisions.length > 0 && (
-                  <Badge variant="secondary">{revisions.length}</Badge>
-                )}
+                {revisions.length > 0 && <Badge variant="secondary">{revisions.length}</Badge>}
               </SectionHeader>
               <SectionActions>
                 <ViewModeButton
                   mode={revisionsView}
-                  onToggle={() =>
-                    setRevisionsView((m) =>
-                      m === "detailed" ? "compact" : "detailed",
-                    )
-                  }
+                  onToggle={() => setRevisionsView((m) => (m === "detailed" ? "compact" : "detailed"))}
                 />
               </SectionActions>
               {!revisionsCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
                     {revisions.length === 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        No revisions. Open a repository above.
-                      </p>
+                      <p className="text-xs text-muted-foreground">No revisions. Open a repository above.</p>
                     )}
                     {revisions.map((revision) =>
                       revisionsView === "compact" ? (
@@ -604,12 +533,8 @@ export default function App() {
                           active={revision.oid === selectedRev}
                           onClick={() => pickRevision(revision.oid)}
                         >
-                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                            {revision.short}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-[13px]">
-                            {revision.summary}
-                          </span>
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">{revision.short}</span>
+                          <span className="min-w-0 flex-1 truncate text-[13px]">{revision.summary}</span>
                           <span className="shrink-0 text-[11px] text-muted-foreground">
                             {formatTime(revision.time)}
                           </span>
@@ -620,12 +545,8 @@ export default function App() {
                           active={revision.oid === selectedRev}
                           onClick={() => pickRevision(revision.oid)}
                         >
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {revision.short}
-                          </span>
-                          <span className="line-clamp-2 text-[13px]">
-                            {revision.summary}
-                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">{revision.short}</span>
+                          <span className="line-clamp-2 text-[13px]">{revision.summary}</span>
                           <span className="text-[11px] text-muted-foreground">
                             {revision.author} · {formatTime(revision.time)}
                           </span>
@@ -642,16 +563,10 @@ export default function App() {
             {selectedFile ? (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <h1 className="font-mono text-sm break-all">
-                    {selectedFile.path}
-                  </h1>
+                  <h1 className="font-mono text-sm break-all">{selectedFile.path}</h1>
                   <div className="flex items-center gap-1.5">
-                    <Badge variant="secondary">
-                      {formatBytes(selectedFile.size)}
-                    </Badge>
-                    {selectedFile.is_binary && (
-                      <Badge variant="outline">binary</Badge>
-                    )}
+                    <Badge variant="secondary">{formatBytes(selectedFile.size)}</Badge>
+                    {selectedFile.is_binary && <Badge variant="outline">binary</Badge>}
                   </div>
                 </div>
 
@@ -664,16 +579,12 @@ export default function App() {
                       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
                         <dt className="text-muted-foreground">Handler</dt>
                         <dd>{metadata.format}</dd>
-                        {Object.entries(metadata.attributes).map(
-                          ([key, value]) => (
-                            <Fragment key={key}>
-                              <dt className="text-muted-foreground">{key}</dt>
-                              <dd className="font-mono text-xs break-all">
-                                {value}
-                              </dd>
-                            </Fragment>
-                          ),
-                        )}
+                        {Object.entries(metadata.attributes).map(([key, value]) => (
+                          <Fragment key={key}>
+                            <dt className="text-muted-foreground">{key}</dt>
+                            <dd className="font-mono text-xs break-all">{value}</dd>
+                          </Fragment>
+                        ))}
                       </dl>
                     </CardContent>
                   </Card>
@@ -681,11 +592,7 @@ export default function App() {
 
                 <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-lg border bg-muted">
                   {mesh && mesh.indices.length > 0 ? (
-                    <Viewer
-                      positions={mesh.positions}
-                      indices={mesh.indices}
-                      theme={theme}
-                    />
+                    <Viewer positions={mesh.positions} indices={mesh.indices} theme={theme} />
                   ) : (
                     <p className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
                       No preview available for this format.
@@ -696,9 +603,7 @@ export default function App() {
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
                 <h2 className="text-sm font-medium">Detail</h2>
-                <p className="text-sm text-muted-foreground">
-                  Select a file to inspect its metadata and preview.
-                </p>
+                <p className="text-sm text-muted-foreground">Select a file to inspect its metadata and preview.</p>
               </div>
             )}
 
@@ -711,18 +616,9 @@ export default function App() {
                   <StatRow label="Revisions" value={stats.revisions} />
                   <StatRow label="File revisions" value={stats.file_revisions} />
                   <StatRow label="Unique blobs" value={stats.unique_blobs} />
-                  <StatRow
-                    label="Unique bytes"
-                    value={formatBytes(stats.unique_bytes)}
-                  />
-                  <StatRow
-                    label="Referenced"
-                    value={formatBytes(stats.referenced_bytes)}
-                  />
-                  <StatRow
-                    label="Dedup saved"
-                    value={formatBytes(stats.dedup_saved_bytes)}
-                  />
+                  <StatRow label="Unique bytes" value={formatBytes(stats.unique_bytes)} />
+                  <StatRow label="Referenced" value={formatBytes(stats.referenced_bytes)} />
+                  <StatRow label="Dedup saved" value={formatBytes(stats.dedup_saved_bytes)} />
                 </CardContent>
               </Card>
             )}
