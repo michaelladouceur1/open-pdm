@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <title>OpenPDM</title>
     <script>
       // Apply the saved theme before first paint to avoid a flash of the
       // default light theme when dark mode was previously selected.
       try {
         if (localStorage.getItem("openpdm-theme") === "dark") {
-          document.documentElement.dataset.theme = "dark";
+          document.documentElement.classList.add("dark");
         }
       } catch {}
     </script>

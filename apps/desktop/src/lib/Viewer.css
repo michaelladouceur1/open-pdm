@@ -3,7 +3,7 @@
      of flex/percentage-height resolution quirks across engines. */
   position: absolute;
   inset: 0;
-  background: var(--bg-viewer, #181a20);
+  background: var(--muted, #181a20);
   overflow: hidden;
   height: 100%;
 }

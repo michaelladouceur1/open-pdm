@@ -1,6 +1,27 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FiMoon, FiSun } from "react-icons/fi";
+import {
+  CircleAlertIcon,
+  DatabaseIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  MoonIcon,
+  SunIcon,
+} from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   createProject,
   getFiles,
@@ -15,8 +36,9 @@ import {
   type Mesh,
   type ProjectInfo,
   type Revision,
-} from "./lib/api";
-import Viewer from "./lib/Viewer";
+} from "@/lib/api";
+import { cn } from "@/lib/utils";
+import Viewer from "@/lib/Viewer";
 
 function formatBytes(n: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -46,6 +68,41 @@ type Theme = "light" | "dark";
 function initialTheme(): Theme {
   const saved = localStorage.getItem("openpdm-theme");
   return saved === "dark" ? "dark" : "light";
+}
+
+// A selectable list row, used for both revisions and files.
+function ListRow({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full flex-col items-start gap-0.5 rounded-lg border px-2.5 py-2 text-left transition-colors",
+        active
+          ? "border-primary/40 bg-accent text-accent-foreground"
+          : "border-transparent bg-muted/40 hover:bg-muted",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between border-b py-1 text-[13px] last:border-0">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
 }
 
 export default function App() {
@@ -165,150 +222,235 @@ export default function App() {
     void loadPath(projectPath);
   }, []);
 
-  // Reflect the selected theme on <html> so the CSS variables switch, and
+  // Reflect the selected theme with shadcn's `.dark` class on <html>, and
   // remember the choice for the next launch.
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem("openpdm-theme", theme);
   }, [theme]);
 
+  const themeLabel =
+    theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+
   return (
-    <div className="app">
-      <header>
-        <div className="brand">OpenPDM</div>
-        <input
-          className="path"
-          value={projectPath}
-          placeholder="/path/to/project"
-          onChange={(e) => setProjectPath(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && loadPath(projectPath)}
-        />
-        <button onClick={newProject} disabled={busy}>
-          New
-        </button>
-        <button className="secondary" onClick={openProjectPicker} disabled={busy}>
-          Open
-        </button>
-        <button className="secondary" onClick={buildIndex} disabled={busy || !info}>
-          Index
-        </button>
-        <button
-          className="secondary icon"
-          onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-          title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
-          aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
-        >
-          {theme === "light" ? <FiSun /> : <FiMoon />}
-        </button>
-        {busy && <span className="muted">working…</span>}
-      </header>
-
-      {error && <div className="error">{error}</div>}
-
-      <main>
-        <aside className="column revisions">
-          <h2>Revisions</h2>
-          {revisions.length === 0 && (
-            <p className="muted">No revisions. Open a repository above.</p>
+    <TooltipProvider>
+      <div className="flex h-screen flex-col bg-background text-foreground">
+        <header className="flex items-center gap-2 border-b bg-card px-3 py-2">
+          <div className="px-1 text-sm font-semibold tracking-wide text-primary">
+            OpenPDM
+          </div>
+          <Separator orientation="vertical" className="mx-0.5 h-5" />
+          <Input
+            className="h-8 min-w-0 flex-1 font-mono"
+            value={projectPath}
+            placeholder="/path/to/project"
+            onChange={(e) => setProjectPath(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && loadPath(projectPath)}
+          />
+          <Button onClick={newProject} disabled={busy}>
+            <FolderPlusIcon data-icon="inline-start" />
+            New
+          </Button>
+          <Button variant="outline" onClick={openProjectPicker} disabled={busy}>
+            <FolderOpenIcon data-icon="inline-start" />
+            Open
+          </Button>
+          <Button variant="outline" onClick={buildIndex} disabled={busy || !info}>
+            <DatabaseIcon data-icon="inline-start" />
+            Index
+          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
+              onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+              aria-label={themeLabel}
+            >
+              {theme === "light" ? <SunIcon /> : <MoonIcon />}
+            </TooltipTrigger>
+            <TooltipContent>{themeLabel}</TooltipContent>
+          </Tooltip>
+          {busy && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Spinner className="size-3.5" />
+              working…
+            </span>
           )}
-          {revisions.map((revision) => (
-            <button
-              key={revision.oid}
-              className={`row${revision.oid === selectedRev ? " active" : ""}`}
-              onClick={() => pickRevision(revision.oid)}
-            >
-              <span className="mono">{revision.short}</span>
-              <span className="summary">{revision.summary}</span>
-              <span className="muted small">
-                {revision.author} · {formatTime(revision.time)}
-              </span>
-            </button>
-          ))}
-        </aside>
+        </header>
 
-        <section className="column files">
-          <h2>
-            Files
-            {selectedRev && <span className="muted mono"> @ {shortOid(selectedRev)}</span>}
-          </h2>
-          {files.length === 0 && <p className="muted">No files.</p>}
-          {files.map((file) => (
-            <button
-              key={file.oid + file.path}
-              className={`row${selectedFile?.path === file.path ? " active" : ""}`}
-              onClick={() => pickFile(file)}
-            >
-              <span className="filename">{file.path}</span>
-              <span className="muted small">
-                {formatBytes(file.size)}
-                {file.is_binary ? " · binary" : ""}
-              </span>
-            </button>
-          ))}
-        </section>
+        {error && (
+          <div className="border-b px-3 py-2">
+            <Alert variant="destructive">
+              <CircleAlertIcon />
+              <AlertTitle>Something went wrong</AlertTitle>
+              <AlertDescription className="font-mono text-xs break-all">
+                {error}
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
 
-        <section className="column detail">
-          {selectedFile ? (
-            <>
-              <h2>{selectedFile.path}</h2>
-              {metadata && (
-                <dl className="meta">
-                  <dt>Handler</dt>
-                  <dd>{metadata.format}</dd>
-                  {Object.entries(metadata.attributes).map(([key, value]) => (
-                    <Fragment key={key}>
-                      <dt>{key}</dt>
-                      <dd className="mono">{value}</dd>
-                    </Fragment>
-                  ))}
-                </dl>
+        <main className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_minmax(240px,300px)_1fr]">
+          <aside className="flex min-h-0 flex-col border-r">
+            <div className="flex items-center justify-between px-3 pt-3 pb-2">
+              <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                Revisions
+              </h2>
+              {revisions.length > 0 && (
+                <Badge variant="secondary">{revisions.length}</Badge>
               )}
-              <div className="viewport">
-                {mesh && mesh.indices.length > 0 ? (
-                  <Viewer positions={mesh.positions} indices={mesh.indices} theme={theme} />
-                ) : (
-                  <p className="muted center">No preview available for this format.</p>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <h2>Detail</h2>
-              <p className="muted">Select a file to inspect its metadata and preview.</p>
-            </>
-          )}
-
-          {stats && (
-            <div className="stats">
-              <h3>Index</h3>
-              <div>
-                <span>Revisions</span>
-                <b>{stats.revisions}</b>
-              </div>
-              <div>
-                <span>File revisions</span>
-                <b>{stats.file_revisions}</b>
-              </div>
-              <div>
-                <span>Unique blobs</span>
-                <b>{stats.unique_blobs}</b>
-              </div>
-              <div>
-                <span>Unique bytes</span>
-                <b>{formatBytes(stats.unique_bytes)}</b>
-              </div>
-              <div>
-                <span>Referenced</span>
-                <b>{formatBytes(stats.referenced_bytes)}</b>
-              </div>
-              <div>
-                <span>Dedup saved</span>
-                <b>{formatBytes(stats.dedup_saved_bytes)}</b>
-              </div>
             </div>
-          )}
-        </section>
-      </main>
-    </div>
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="flex flex-col gap-1.5 px-3 pb-3">
+                {revisions.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No revisions. Open a repository above.
+                  </p>
+                )}
+                {revisions.map((revision) => (
+                  <ListRow
+                    key={revision.oid}
+                    active={revision.oid === selectedRev}
+                    onClick={() => pickRevision(revision.oid)}
+                  >
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {revision.short}
+                    </span>
+                    <span className="line-clamp-2 text-[13px]">
+                      {revision.summary}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {revision.author} · {formatTime(revision.time)}
+                    </span>
+                  </ListRow>
+                ))}
+              </div>
+            </ScrollArea>
+          </aside>
+
+          <section className="flex min-h-0 flex-col border-r">
+            <div className="flex items-center gap-2 px-3 pt-3 pb-2">
+              <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                Files
+              </h2>
+              {selectedRev && (
+                <Badge variant="outline" className="font-mono">
+                  @ {shortOid(selectedRev)}
+                </Badge>
+              )}
+            </div>
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="flex flex-col gap-1.5 px-3 pb-3">
+                {files.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No files.</p>
+                )}
+                {files.map((file) => (
+                  <ListRow
+                    key={file.oid + file.path}
+                    active={selectedFile?.path === file.path}
+                    onClick={() => pickFile(file)}
+                  >
+                    <span className="text-[13px] break-all">{file.path}</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {formatBytes(file.size)}
+                      {file.is_binary ? " · binary" : ""}
+                    </span>
+                  </ListRow>
+                ))}
+              </div>
+            </ScrollArea>
+          </section>
+
+          <section className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
+            {selectedFile ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <h1 className="font-mono text-sm break-all">
+                    {selectedFile.path}
+                  </h1>
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="secondary">
+                      {formatBytes(selectedFile.size)}
+                    </Badge>
+                    {selectedFile.is_binary && (
+                      <Badge variant="outline">binary</Badge>
+                    )}
+                  </div>
+                </div>
+
+                {metadata && (
+                  <Card size="sm">
+                    <CardHeader>
+                      <CardTitle>Metadata</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+                        <dt className="text-muted-foreground">Handler</dt>
+                        <dd>{metadata.format}</dd>
+                        {Object.entries(metadata.attributes).map(
+                          ([key, value]) => (
+                            <Fragment key={key}>
+                              <dt className="text-muted-foreground">{key}</dt>
+                              <dd className="font-mono text-xs break-all">
+                                {value}
+                              </dd>
+                            </Fragment>
+                          ),
+                        )}
+                      </dl>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-lg border bg-muted">
+                  {mesh && mesh.indices.length > 0 ? (
+                    <Viewer
+                      positions={mesh.positions}
+                      indices={mesh.indices}
+                      theme={theme}
+                    />
+                  ) : (
+                    <p className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
+                      No preview available for this format.
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+                <h2 className="text-sm font-medium">Detail</h2>
+                <p className="text-sm text-muted-foreground">
+                  Select a file to inspect its metadata and preview.
+                </p>
+              </div>
+            )}
+
+            {stats && (
+              <Card size="sm">
+                <CardHeader>
+                  <CardTitle>Index</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col">
+                  <StatRow label="Revisions" value={stats.revisions} />
+                  <StatRow label="File revisions" value={stats.file_revisions} />
+                  <StatRow label="Unique blobs" value={stats.unique_blobs} />
+                  <StatRow
+                    label="Unique bytes"
+                    value={formatBytes(stats.unique_bytes)}
+                  />
+                  <StatRow
+                    label="Referenced"
+                    value={formatBytes(stats.referenced_bytes)}
+                  />
+                  <StatRow
+                    label="Dedup saved"
+                    value={formatBytes(stats.dedup_saved_bytes)}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </section>
+        </main>
+      </div>
+    </TooltipProvider>
   );
 }
