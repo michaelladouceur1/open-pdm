@@ -140,6 +140,7 @@
     inset: 0;
     background: #181a20;
     overflow: hidden;
+    height: 100%;
   }
   /* Pin the canvas to the container instead of relying on three.js's inline
      style sizing, so it always fills the box at any devicePixelRatio. */
