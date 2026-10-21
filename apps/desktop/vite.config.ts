@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
+import react from "@vitejs/plugin-react";
 
 // Tauri expects a fixed dev port and does not want Vite to clear the screen.
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [react()],
   clearScreen: false,
   server: {
     port: 5173,

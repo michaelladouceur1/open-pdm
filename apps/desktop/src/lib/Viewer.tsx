@@ -1,36 +1,40 @@
-<script lang="ts">
-  import { onMount } from "svelte";
-  import * as THREE from "three";
-  import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { useEffect, useRef } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import "./Viewer.css";
 
+interface ViewerProps {
   // Flat vertex positions [x,y,z,...] and triangle indices [i,j,k,...].
-  let { positions = [] as number[], indices = [] as number[] } = $props();
+  positions?: number[];
+  indices?: number[];
+}
 
-  let container: HTMLDivElement;
-  // `ready` is $state so the mesh $effect re-runs once the scene exists.
-  // The three.js objects deliberately stay plain variables: $state would
-  // deep-proxy them and break three's internal identity checks.
-  let ready = $state(false);
+export default function Viewer({ positions = [], indices = [] }: ViewerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  let renderer: THREE.WebGLRenderer;
-  let scene: THREE.Scene;
-  let camera: THREE.PerspectiveCamera;
-  let controls: OrbitControls;
-  let solid: THREE.Mesh | null = null;
-  let raf = 0;
+  // The three.js objects deliberately stay in refs: React state would treat
+  // them as immutable snapshots and three relies on object identity.
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const solidRef = useRef<THREE.Mesh | null>(null);
 
-  onMount(() => {
-    scene = new THREE.Scene();
+  // Set up the scene once, on mount.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x181a20);
 
-    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     camera.up.set(0, 0, 1); // CAD convention: Z is up.
 
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
 
-    controls = new OrbitControls(camera, renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.75));
@@ -75,48 +79,61 @@
     };
     settleRaf = requestAnimationFrame(settle);
 
+    let raf = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);
       controls.update();
       renderer.render(scene, camera);
     };
     animate();
-    ready = true;
+
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
 
     return () => {
-      ready = false;
       cancelAnimationFrame(raf);
       cancelAnimationFrame(settleRaf);
       observer.disconnect();
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();
+      sceneRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
     };
-  });
+  }, []);
 
-  $effect(() => {
-    const pos = positions;
-    const idx = indices;
-    if (!ready) return;
+  // Rebuild the mesh whenever the geometry changes.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
 
-    if (solid) {
-      scene.remove(solid);
-      solid.geometry.dispose();
-      (solid.material as THREE.Material).dispose();
-      solid = null;
-    }
-    if (!idx || idx.length === 0) return;
+    const removeSolid = () => {
+      if (!solidRef.current) return;
+      scene?.remove(solidRef.current);
+      solidRef.current.geometry.dispose();
+      (solidRef.current.material as THREE.Material).dispose();
+      solidRef.current = null;
+    };
+
+    if (!scene || !camera || !controls) return;
+
+    removeSolid();
+    if (!indices || indices.length === 0) return;
 
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-    geometry.setIndex(idx);
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
 
-    solid = new THREE.Mesh(
+    const solid = new THREE.Mesh(
       geometry,
       new THREE.MeshStandardMaterial({ color: 0x7fb2ff, metalness: 0.15, roughness: 0.55 }),
     );
+    solidRef.current = solid;
     scene.add(solid);
 
     const sphere = geometry.boundingSphere!;
@@ -127,28 +144,9 @@
     camera.far = radius * 100;
     camera.updateProjectionMatrix();
     controls.update();
-  });
-</script>
 
-<div class="viewer" bind:this={container}></div>
+    return removeSolid;
+  }, [positions, indices]);
 
-<style>
-  .viewer {
-    /* Pin to the (positioned) viewport box so it always fills it, independent
-       of flex/percentage-height resolution quirks across engines. */
-    position: absolute;
-    inset: 0;
-    background: #181a20;
-    overflow: hidden;
-    height: 100%;
-  }
-  /* Pin the canvas to the container instead of relying on three.js's inline
-     style sizing, so it always fills the box at any devicePixelRatio. */
-  .viewer :global(canvas) {
-    display: block;
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-</style>
+  return <div className="viewer" ref={containerRef} />;
+}
