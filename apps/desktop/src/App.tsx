@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { FiMoon, FiSun } from "react-icons/fi";
 import {
   createProject,
   getFiles,
@@ -40,6 +41,13 @@ function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
 
+type Theme = "light" | "dark";
+
+function initialTheme(): Theme {
+  const saved = localStorage.getItem("openpdm-theme");
+  return saved === "dark" ? "dark" : "light";
+}
+
 export default function App() {
   const [projectPath, setProjectPath] = useState("/tmp/openpdm-demo");
   const [info, setInfo] = useState<ProjectInfo | null>(null);
@@ -52,6 +60,7 @@ export default function App() {
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
 
   async function loadPath(path: string) {
     setError(null);
@@ -156,6 +165,13 @@ export default function App() {
     void loadPath(projectPath);
   }, []);
 
+  // Reflect the selected theme on <html> so the CSS variables switch, and
+  // remember the choice for the next launch.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("openpdm-theme", theme);
+  }, [theme]);
+
   return (
     <div className="app">
       <header>
@@ -175,6 +191,14 @@ export default function App() {
         </button>
         <button className="secondary" onClick={buildIndex} disabled={busy || !info}>
           Index
+        </button>
+        <button
+          className="secondary icon"
+          onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+          title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+          aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+        >
+          {theme === "light" ? <FiSun /> : <FiMoon />}
         </button>
         {busy && <span className="muted">working…</span>}
       </header>
@@ -241,7 +265,7 @@ export default function App() {
               )}
               <div className="viewport">
                 {mesh && mesh.indices.length > 0 ? (
-                  <Viewer positions={mesh.positions} indices={mesh.indices} />
+                  <Viewer positions={mesh.positions} indices={mesh.indices} theme={theme} />
                 ) : (
                   <p className="muted center">No preview available for this format.</p>
                 )}

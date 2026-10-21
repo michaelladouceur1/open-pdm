@@ -3,13 +3,31 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import "./Viewer.css";
 
+type Theme = "light" | "dark";
+
 interface ViewerProps {
   // Flat vertex positions [x,y,z,...] and triangle indices [i,j,k,...].
   positions?: number[];
   indices?: number[];
+  theme?: Theme;
 }
 
-export default function Viewer({ positions = [], indices = [] }: ViewerProps) {
+// Scene colours per theme. The light background matches the surrounding
+// light UI; the dark background is a lighter grey than a pure near-black so
+// the model and grid stay legible.
+const VIEWER_COLORS: Record<Theme, { background: number; gridMajor: number; gridMinor: number }> = {
+  light: { background: 0xdddddd, gridMajor: 0xb8bfc9, gridMinor: 0xd2d7de },
+  dark: { background: 0x222222, gridMajor: 0x565d6e, gridMinor: 0x424856 },
+};
+
+function makeGrid(theme: Theme): THREE.GridHelper {
+  const { gridMajor, gridMinor } = VIEWER_COLORS[theme];
+  const grid = new THREE.GridHelper(10, 10, gridMajor, gridMinor);
+  grid.rotation.x = Math.PI / 2; // Lay the grid flat in the Z-up plane.
+  return grid;
+}
+
+export default function Viewer({ positions = [], indices = [], theme = "light" }: ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // The three.js objects deliberately stay in refs: React state would treat
@@ -18,6 +36,9 @@ export default function Viewer({ positions = [], indices = [] }: ViewerProps) {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const solidRef = useRef<THREE.Mesh | null>(null);
+  const gridRef = useRef<THREE.GridHelper | null>(null);
+  const themeRef = useRef<Theme>(theme);
+  themeRef.current = theme;
 
   // Set up the scene once, on mount.
   useEffect(() => {
@@ -25,7 +46,7 @@ export default function Viewer({ positions = [], indices = [] }: ViewerProps) {
     if (!container) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x181a20);
+    scene.background = new THREE.Color(VIEWER_COLORS[themeRef.current].background);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     camera.up.set(0, 0, 1); // CAD convention: Z is up.
@@ -42,8 +63,8 @@ export default function Viewer({ positions = [], indices = [] }: ViewerProps) {
     key.position.set(4, -6, 8);
     scene.add(key);
 
-    const grid = new THREE.GridHelper(10, 10, 0x3a3f4b, 0x2a2e37);
-    grid.rotation.x = Math.PI / 2; // Lay the grid flat in the Z-up plane.
+    const grid = makeGrid(themeRef.current);
+    gridRef.current = grid;
     scene.add(grid);
 
     // Keep the drawing buffer and camera in sync with the container's CSS box.
@@ -98,11 +119,34 @@ export default function Viewer({ positions = [], indices = [] }: ViewerProps) {
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();
+      if (gridRef.current) {
+        gridRef.current.geometry.dispose();
+        (gridRef.current.material as THREE.Material).dispose();
+        gridRef.current = null;
+      }
       sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
     };
   }, []);
+
+  // Repaint the scene when the app theme changes: swap the background and
+  // rebuild the grid with colours suited to the new background.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    scene.background = new THREE.Color(VIEWER_COLORS[theme].background);
+
+    if (gridRef.current) {
+      scene.remove(gridRef.current);
+      gridRef.current.geometry.dispose();
+      (gridRef.current.material as THREE.Material).dispose();
+      const grid = makeGrid(theme);
+      gridRef.current = grid;
+      scene.add(grid);
+    }
+  }, [theme]);
 
   // Rebuild the mesh whenever the geometry changes.
   useEffect(() => {
