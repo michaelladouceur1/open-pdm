@@ -670,7 +670,7 @@ export default function App() {
                     {info &&
                       (revisionsView === "compact" ? (
                         <ListRow compact active={isCurrent} onClick={() => pickRevision(CURRENT_REV)}>
-                          <span className="shrink-0 font-mono text-xs text-muted-foreground">open</span>
+                          <span className="min-w-[8ch] shrink-0 font-mono text-xs text-muted-foreground">open</span>
                           <span className="min-w-0 flex-1 truncate text-[13px]">Current</span>
                           <span className="shrink-0 text-[11px] text-muted-foreground">
                             {changeCount > 0 ? `${changeCount} changed` : "clean"}
@@ -740,7 +740,7 @@ export default function App() {
                     <CardHeader>
                       <CardTitle>Metadata</CardTitle>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="max-h-[40vh] overflow-y-auto">
                       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
                         <dt className="text-muted-foreground">Handler</dt>
                         <dd>{metadata.format}</dd>
