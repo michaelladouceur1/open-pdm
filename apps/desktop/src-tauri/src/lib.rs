@@ -94,6 +94,16 @@ fn unstage_file(path: String, file: String) -> Result<(), String> {
     open(&path)?.unstage(&file).map_err(to_err)
 }
 
+/// Commit the staged changes of the open "Current" revision into history.
+///
+/// Backs the commit composer shown beneath the Revisions header. Returns the
+/// new [`Revision`] so the UI can refresh history; rejects an empty message or
+/// an empty staging area.
+#[tauri::command]
+fn commit(path: String, message: String) -> Result<Revision, String> {
+    open(&path)?.commit(&message).map_err(to_err)
+}
+
 #[tauri::command]
 fn metadata(path: String, file: String, rev: Option<String>) -> Result<FileMetadata, String> {
     let project = open(&path)?;
@@ -169,6 +179,7 @@ pub fn run() {
             files,
             stage_file,
             unstage_file,
+            commit,
             metadata,
             mesh,
             shape_payloads,

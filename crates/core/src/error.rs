@@ -21,6 +21,12 @@ pub enum Error {
     #[error("no handler registered for: {0}")]
     Unsupported(String),
 
+    #[error("nothing staged to commit")]
+    NothingStaged,
+
+    #[error("commit message is required")]
+    EmptyMessage,
+
     #[error("failed to parse {format}: {message}")]
     Parse { format: String, message: String },
 }

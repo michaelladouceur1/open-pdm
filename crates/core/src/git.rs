@@ -252,6 +252,51 @@ impl Project {
         Ok(())
     }
 
+    /// Commit the staged changes of the open "Current" revision.
+    ///
+    /// The commit is built from the current index tree and made the new tip of
+    /// the checked-out branch (or HEAD when detached). An empty message and an
+    /// index that matches HEAD are both rejected, the latter as
+    /// [`Error::NothingStaged`], so the UI never produces a no-op commit.
+    pub fn commit(&self, message: &str) -> Result<Revision> {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(Error::EmptyMessage);
+        }
+
+        let mut index = self.repo.index()?;
+        let tree_id = index.write_tree()?;
+        let tree = self.repo.find_tree(tree_id)?;
+
+        let parent = match self.repo.head() {
+            Ok(head) => Some(head.peel_to_commit()?),
+            Err(_) => None,
+        };
+
+        // Nothing staged: the index tree either matches HEAD or, on an unborn
+        // branch, is empty. Creating a commit would be a no-op.
+        let has_changes = match &parent {
+            Some(parent) => parent.tree_id() != tree_id,
+            None => !tree.is_empty(),
+        };
+        if !has_changes {
+            return Err(Error::NothingStaged);
+        }
+
+        let signature = self.repo.signature()?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let oid = self.repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parents,
+        )?;
+        let commit = self.repo.find_commit(oid)?;
+        Ok(revision_from_commit(&commit))
+    }
+
     /// Size, binary flag and content id for a working file, preferring the
     /// on-disk contents and falling back to the staged index entry (for, say, a
     /// staged then deleted file).
@@ -444,6 +489,58 @@ mod tests {
             .unwrap();
         assert_eq!(b.staged, Some(false));
         assert_eq!(b.status.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn commits_staged_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        // Nothing staged yet, so a commit is a no-op and must be refused.
+        assert!(matches!(project.commit("nope"), Err(Error::NothingStaged)));
+
+        project.stage("a.txt").unwrap();
+        let revision = project.commit("update a").unwrap();
+        assert_eq!(revision.summary, "update a");
+        assert_eq!(project.revisions(10).unwrap()[0].oid, revision.oid);
+        // The index now matches HEAD, so the working tree is clean.
+        assert!(project.working_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn commits_first_revision_on_unborn_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let _repo = init_repo(dir.path());
+
+        let project = Project::open(dir.path()).unwrap();
+        assert!(project.is_unborn());
+        // An empty index has nothing to commit.
+        assert!(matches!(project.commit("first"), Err(Error::NothingStaged)));
+
+        std::fs::write(dir.path().join("part.stl"), b"solid x").unwrap();
+        project.stage("part.stl").unwrap();
+        let revision = project.commit("first").unwrap();
+        assert_eq!(revision.summary, "first");
+        assert_eq!(revision.parents, 0);
+        assert!(!project.is_unborn());
+        assert_eq!(project.revisions(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rejects_empty_commit_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        project.stage("a.txt").unwrap();
+        assert!(matches!(project.commit("   "), Err(Error::EmptyMessage)));
+        // The staged change is left intact for a corrected message.
+        assert_eq!(project.working_files().unwrap().len(), 1);
     }
 
     #[test]

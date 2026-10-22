@@ -14,6 +14,7 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   CURRENT_REV,
+  commitStaged,
   createProject,
   getFiles,
   getMesh,
@@ -83,6 +84,14 @@ export interface AppContextValue {
   pickFile: (file: FileEntry) => Promise<void>;
   toggleStaged: (file: FileEntry) => Promise<void>;
 
+  // Commit composer for the open "Current" revision.
+  commitMessage: string;
+  setCommitMessage: Dispatch<SetStateAction<string>>;
+  /** Number of changes staged into the open "Current" revision. */
+  stagedCount: number;
+  committing: boolean;
+  commitCurrent: () => Promise<void>;
+
   // Left-column divider resize handlers.
   startResize: (e: ReactPointerEvent<HTMLDivElement>) => void;
   resize: (e: ReactPointerEvent<HTMLDivElement>) => void;
@@ -120,6 +129,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   // True while a file's preview is being produced (e.g. B-rep tessellation).
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Draft commit message and in-flight flag for the Current revision composer.
+  const [commitMessage, setCommitMessage] = useState("");
+  const [committing, setCommitting] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => getStored("theme", "light"));
   const [filesCollapsed, setFilesCollapsed] = useState(() => getStored("filesCollapsed", false));
   const [revisionsCollapsed, setRevisionsCollapsed] = useState(() => getStored("revisionsCollapsed", false));
@@ -141,6 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setError(null);
     setBusy(true);
     setStats(null);
+    setCommitMessage("");
     try {
       setInfo(await openProject(path));
       // Remember the project that actually opened so the next launch can
@@ -238,6 +251,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await refreshWorking();
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  // Commit the staged changes of the open "Current" revision into history, then
+  // refresh the history list and the (now clean) working tree.
+  async function commitCurrent() {
+    if (stagedCount === 0) {
+      setError("No staged changes to commit.");
+      return;
+    }
+    const message = commitMessage.trim();
+    if (!message) {
+      setError("Enter a commit message.");
+      return;
+    }
+    setError(null);
+    setCommitting(true);
+    try {
+      await commitStaged(projectPath, message);
+      setCommitMessage("");
+      setRevisions(await getRevisions(projectPath, 50));
+      await refreshWorking();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCommitting(false);
     }
   }
 
@@ -366,6 +405,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const isCurrent = selectedRev === CURRENT_REV;
+  // Staged changes only exist in the working tree; committed revisions have none.
+  const stagedCount = isCurrent ? files.filter((file) => file.staged).length : 0;
 
   const value: AppContextValue = {
     projectPath,
@@ -402,6 +443,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pickRevision,
     pickFile,
     toggleStaged,
+    commitMessage,
+    setCommitMessage,
+    stagedCount,
+    committing,
+    commitCurrent,
     startResize,
     resize,
     endResize,

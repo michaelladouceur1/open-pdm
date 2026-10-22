@@ -1,5 +1,10 @@
+import { CheckIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CURRENT_REV } from "@/lib/api";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -22,7 +27,15 @@ export default function RevisionsSection() {
     revisionsCollapsed,
     setRevisionsCollapsed,
     pickRevision,
+    commitMessage,
+    setCommitMessage,
+    stagedCount,
+    committing,
+    commitCurrent,
   } = useApp();
+
+  const commitLabel =
+    stagedCount > 0 ? "Commit staged changes to Current" : "No staged changes to commit";
 
   return (
     <section className={cn("flex min-h-0 flex-col", revisionsCollapsed ? "shrink-0" : "flex-1")}>
@@ -39,6 +52,36 @@ export default function RevisionsSection() {
       >
         {revisions.length > 0 && <Badge variant="secondary">{revisions.length}</Badge>}
       </SectionHeader>
+      {!revisionsCollapsed && isCurrent && (
+        <div className="flex shrink-0 items-stretch gap-1 px-3 pb-2">
+          <Textarea
+            rows={2}
+            value={commitMessage}
+            onChange={(e) => setCommitMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void commitCurrent();
+              }
+            }}
+            placeholder="Commit message"
+            aria-label="Commit message"
+            disabled={committing}
+            className="min-h-0 flex-1 resize-none py-1.5 text-[13px]"
+          />
+          <Tooltip>
+            <TooltipTrigger
+              className={cn(buttonVariants({ variant: "ghost", size: "icon-xs" }), "self-end")}
+              onClick={() => void commitCurrent()}
+              disabled={committing}
+              aria-label={commitLabel}
+            >
+              {committing ? <Spinner className="size-3.5" /> : <CheckIcon />}
+            </TooltipTrigger>
+            <TooltipContent>{commitLabel}</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
       {!revisionsCollapsed && (
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-1.5 px-3 pb-3">
