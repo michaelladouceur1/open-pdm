@@ -189,37 +189,43 @@ function StatRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-// Collapsible header for a stacked section. The whole row toggles the section.
+// Collapsible header for a stacked section. The title row toggles the section;
+// optional actions render right-aligned on the same row.
 function SectionHeader({
   title,
   collapsed,
   onToggle,
+  actions,
   children,
 }: {
   title: string;
   collapsed: boolean;
   onToggle: () => void;
+  actions?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={!collapsed}
-      className="flex w-full shrink-0 items-center gap-2 px-3 pt-3 pb-2 text-left"
-    >
-      <ChevronRightIcon
-        className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", !collapsed && "rotate-90")}
-      />
-      <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
-      {children}
-    </button>
+    <div className="flex w-full shrink-0 items-center gap-2 px-3 pt-3 pb-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        <ChevronRightIcon
+          className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", !collapsed && "rotate-90")}
+        />
+        <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
+        {children}
+      </button>
+      {actions && <SectionActions>{actions}</SectionActions>}
+    </div>
   );
 }
 
-// Container for per-section actions, rendered just below the section header.
+// Container for per-section actions, rendered at the right of the section header.
 function SectionActions({ children }: { children: ReactNode }) {
-  return <div className="flex items-center gap-1 px-3 pb-2 text-muted-foreground">{children}</div>;
+  return <div className="flex shrink-0 items-center gap-1 text-muted-foreground">{children}</div>;
 }
 
 // Icon button that flips a section between detailed and compact rows.
@@ -573,7 +579,17 @@ export default function App() {
                     }
               }
             >
-              <SectionHeader title="Files" collapsed={filesCollapsed} onToggle={() => setFilesCollapsed((c) => !c)}>
+              <SectionHeader
+                title="Files"
+                collapsed={filesCollapsed}
+                onToggle={() => setFilesCollapsed((c) => !c)}
+                actions={
+                  <ViewModeButton
+                    mode={filesView}
+                    onToggle={() => setFilesView((m) => (m === "detailed" ? "compact" : "detailed"))}
+                  />
+                }
+              >
                 {selectedRev &&
                   (isCurrent ? (
                     <Badge variant="outline">current</Badge>
@@ -583,12 +599,6 @@ export default function App() {
                     </Badge>
                   ))}
               </SectionHeader>
-              <SectionActions>
-                <ViewModeButton
-                  mode={filesView}
-                  onToggle={() => setFilesView((m) => (m === "detailed" ? "compact" : "detailed"))}
-                />
-              </SectionActions>
               {!filesCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
@@ -660,15 +670,15 @@ export default function App() {
                 title="Revisions"
                 collapsed={revisionsCollapsed}
                 onToggle={() => setRevisionsCollapsed((c) => !c)}
+                actions={
+                  <ViewModeButton
+                    mode={revisionsView}
+                    onToggle={() => setRevisionsView((m) => (m === "detailed" ? "compact" : "detailed"))}
+                  />
+                }
               >
                 {revisions.length > 0 && <Badge variant="secondary">{revisions.length}</Badge>}
               </SectionHeader>
-              <SectionActions>
-                <ViewModeButton
-                  mode={revisionsView}
-                  onToggle={() => setRevisionsView((m) => (m === "detailed" ? "compact" : "detailed"))}
-                />
-              </SectionActions>
               {!revisionsCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
