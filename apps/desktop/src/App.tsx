@@ -14,7 +14,9 @@ import {
   DatabaseIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  MinusIcon,
   MoonIcon,
+  PlusIcon,
   Rows2Icon,
   Rows4Icon,
   SunIcon,
@@ -29,6 +31,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  CURRENT_REV,
   createProject,
   getFiles,
   getMesh,
@@ -37,6 +40,8 @@ import {
   getShapePayloads,
   indexProject,
   openProject,
+  stageFile,
+  unstageFile,
   type FileEntry,
   type FileMetadata,
   type IndexStats,
@@ -113,6 +118,68 @@ function ListRow({
   );
 }
 
+// A file row for the open "Current" revision. Changes already staged into the
+// revision are highlighted green; changes not yet included are highlighted red.
+// A trailing icon button stages or unstages the file without opening it.
+function ChangeRow({
+  file,
+  active,
+  compact,
+  onOpen,
+  onToggleStage,
+}: {
+  file: FileEntry;
+  active: boolean;
+  compact: boolean;
+  onOpen: () => void;
+  onToggleStage: () => void;
+}) {
+  const staged = file.staged === true;
+  const label = staged ? "Unstage from current revision" : "Add to current revision";
+  return (
+    <div
+      className={cn(
+        "flex w-full items-stretch rounded-lg border transition-colors",
+        staged ? "border-emerald-500/40 bg-emerald-500/5" : "border-destructive/40 bg-destructive/5",
+        active && "ring-1 ring-primary/40",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        className={cn(
+          "flex min-w-0 flex-1 rounded-lg text-left",
+          compact ? "flex-row items-center gap-2 px-2.5 py-1" : "flex-col items-start gap-0.5 px-2.5 py-2",
+        )}
+      >
+        <span
+          className={cn(
+            "text-[13px]",
+            compact ? "min-w-0 flex-1 truncate" : "break-all",
+            staged ? "text-emerald-700 dark:text-emerald-400" : "text-destructive",
+          )}
+        >
+          {file.path}
+        </span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {file.status ?? "changed"} · {formatBytes(file.size)}
+          {file.is_binary ? " · binary" : ""}
+        </span>
+      </button>
+      <Tooltip>
+        <TooltipTrigger
+          className={cn(buttonVariants({ variant: "ghost", size: "icon-xs" }), "mr-1 self-center")}
+          onClick={onToggleStage}
+          aria-label={label}
+        >
+          {staged ? <MinusIcon /> : <PlusIcon />}
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 function StatRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center justify-between border-b py-1 text-[13px] last:border-0">
@@ -179,6 +246,9 @@ export default function App() {
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [selectedRev, setSelectedRev] = useState<string | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
+  // Number of changed files in the open "Current" revision, kept even while a
+  // committed revision is selected so the Current row can show a count.
+  const [changeCount, setChangeCount] = useState(0);
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
   const [metadata, setMetadata] = useState<FileMetadata | null>(null);
   const [mesh, setMesh] = useState<Mesh | null>(null);
@@ -214,6 +284,7 @@ export default function App() {
       setRevisions(revs);
       const rev = revs[0]?.oid ?? null;
       setSelectedRev(rev);
+      setChangeCount((await getFiles(path, CURRENT_REV)).length);
       setFiles(await getFiles(path, rev));
       setSelectedFile(null);
       setMetadata(null);
@@ -225,6 +296,7 @@ export default function App() {
       setInfo(null);
       setRevisions([]);
       setFiles([]);
+      setChangeCount(0);
     } finally {
       setBusy(false);
     }
@@ -275,6 +347,29 @@ export default function App() {
     setError(null);
     try {
       await loadFiles(projectPath, oid);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Re-read the open revision's changed files, preserving the current file
+  // selection (so staging does not deselect what you are looking at).
+  async function refreshWorking() {
+    const changes = await getFiles(projectPath, CURRENT_REV);
+    setChangeCount(changes.length);
+    if (selectedRev === CURRENT_REV) setFiles(changes);
+  }
+
+  // Add or remove a file from the open "Current" revision.
+  async function toggleStaged(file: FileEntry) {
+    setError(null);
+    try {
+      if (file.staged) {
+        await unstageFile(projectPath, file.path);
+      } else {
+        await stageFile(projectPath, file.path);
+      }
+      await refreshWorking();
     } catch (e) {
       setError(String(e));
     }
@@ -405,6 +500,7 @@ export default function App() {
   }
 
   const themeLabel = theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+  const isCurrent = selectedRev === CURRENT_REV;
 
   return (
     <TooltipProvider>
@@ -473,11 +569,14 @@ export default function App() {
               }
             >
               <SectionHeader title="Files" collapsed={filesCollapsed} onToggle={() => setFilesCollapsed((c) => !c)}>
-                {selectedRev && (
-                  <Badge variant="outline" className="font-mono">
-                    @ {shortOid(selectedRev)}
-                  </Badge>
-                )}
+                {selectedRev &&
+                  (isCurrent ? (
+                    <Badge variant="outline">current</Badge>
+                  ) : (
+                    <Badge variant="outline" className="font-mono">
+                      @ {shortOid(selectedRev)}
+                    </Badge>
+                  ))}
               </SectionHeader>
               <SectionActions>
                 <ViewModeButton
@@ -488,32 +587,47 @@ export default function App() {
               {!filesCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
-                    {files.length === 0 && <p className="text-xs text-muted-foreground">No files.</p>}
-                    {files.map((file) =>
-                      filesView === "compact" ? (
-                        <ListRow
-                          key={file.oid + file.path}
-                          compact
-                          active={selectedFile?.path === file.path}
-                          onClick={() => pickFile(file)}
-                        >
-                          <span className="min-w-0 flex-1 truncate text-[13px]">{file.path}</span>
-                          <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(file.size)}</span>
-                        </ListRow>
-                      ) : (
-                        <ListRow
-                          key={file.oid + file.path}
-                          active={selectedFile?.path === file.path}
-                          onClick={() => pickFile(file)}
-                        >
-                          <span className="text-[13px] break-all">{file.path}</span>
-                          <span className="text-[11px] text-muted-foreground">
-                            {formatBytes(file.size)}
-                            {file.is_binary ? " · binary" : ""}
-                          </span>
-                        </ListRow>
-                      ),
+                    {files.length === 0 && (
+                      <p className="text-xs text-muted-foreground">{isCurrent ? "No changes." : "No files."}</p>
                     )}
+                    {isCurrent
+                      ? files.map((file) => (
+                          <ChangeRow
+                            key={file.path}
+                            file={file}
+                            compact={filesView === "compact"}
+                            active={selectedFile?.path === file.path}
+                            onOpen={() => pickFile(file)}
+                            onToggleStage={() => toggleStaged(file)}
+                          />
+                        ))
+                      : files.map((file) =>
+                          filesView === "compact" ? (
+                            <ListRow
+                              key={file.path}
+                              compact
+                              active={selectedFile?.path === file.path}
+                              onClick={() => pickFile(file)}
+                            >
+                              <span className="min-w-0 flex-1 truncate text-[13px]">{file.path}</span>
+                              <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {formatBytes(file.size)}
+                              </span>
+                            </ListRow>
+                          ) : (
+                            <ListRow
+                              key={file.path}
+                              active={selectedFile?.path === file.path}
+                              onClick={() => pickFile(file)}
+                            >
+                              <span className="text-[13px] break-all">{file.path}</span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {formatBytes(file.size)}
+                                {file.is_binary ? " · binary" : ""}
+                              </span>
+                            </ListRow>
+                          ),
+                        )}
                   </div>
                 </ScrollArea>
               )}
@@ -553,6 +667,26 @@ export default function App() {
               {!revisionsCollapsed && (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-1.5 px-3 pb-3">
+                    {info &&
+                      (revisionsView === "compact" ? (
+                        <ListRow compact active={isCurrent} onClick={() => pickRevision(CURRENT_REV)}>
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">open</span>
+                          <span className="min-w-0 flex-1 truncate text-[13px]">Current</span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {changeCount > 0 ? `${changeCount} changed` : "clean"}
+                          </span>
+                        </ListRow>
+                      ) : (
+                        <ListRow active={isCurrent} onClick={() => pickRevision(CURRENT_REV)}>
+                          <span className="font-mono text-xs text-muted-foreground">working tree</span>
+                          <span className="text-[13px]">Current</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {changeCount > 0
+                              ? `${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`
+                              : "open revision · no changes"}
+                          </span>
+                        </ListRow>
+                      ))}
                     {revisions.length === 0 && (
                       <p className="text-xs text-muted-foreground">No revisions. Open a repository above.</p>
                     )}

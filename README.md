@@ -23,10 +23,20 @@ repository through to a live 3D preview.
   revisions and files, inspect extracted metadata, and preview meshes in a 3D
   viewport. FreeCAD B-rep shapes are tessellated in the webview with
   `occt-import-js` (OpenCASCADE in WebAssembly).
+- **Open revisions** — the Revisions panel leads with a **Current** entry: the
+  uncommitted working tree. Its changed files can be staged into (and unstaged
+  from) the revision via git's index; finalising the revision is not implemented
+  yet.
+- **Project content allowlist** — only recognised CAD extensions (mesh formats,
+  FreeCAD, STEP/IGES, common native CAD, DXF/DWG, …) appear in the Files panel
+  and can be staged. Repository metadata, notes and generated files such as the
+  `*.pdmdb` index are ignored. The list lives in
+  `open_pdm_core::PROJECT_EXTENSIONS`.
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
-Not yet implemented (by design, see the plan): writes, `git-lfs` transfer and
-locking, STEP/IGES tessellation, sidecar handlers, remote providers, thumbnails.
+Not yet implemented (by design, see the plan): committing the open revision,
+`git-lfs` transfer and locking, STEP/IGES tessellation, sidecar handlers, remote
+providers, thumbnails.
 
 ## Architecture
 

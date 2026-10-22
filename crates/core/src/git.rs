@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
+/// Sentinel revision name selecting the *working tree* — the uncommitted
+/// "Current" revision — instead of a commit. Passed through the same APIs that
+/// otherwise take a commit oid/ref so previews resolve to on-disk contents.
+pub const WORKTREE: &str = ":worktree:";
+
 /// A single commit, flattened for transport to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Revision {
@@ -18,13 +23,25 @@ pub struct Revision {
 }
 
 /// A file present in a revision's tree.
+///
+/// For the committed history the staging fields are `None`. When listing the
+/// working tree (the open ["Current"](WORKTREE) revision) they describe how the
+/// change would be or is already part of the revision.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileEntry {
     pub path: String,
-    /// Git blob object id (content address).
+    /// Git blob object id (content address). Empty for a working change whose
+    /// content is neither in the index nor in HEAD (e.g. an unstaged deletion).
     pub oid: String,
     pub size: u64,
     pub is_binary: bool,
+    /// Whether the working change is staged into the open revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged: Option<bool>,
+    /// Working change kind: `new`, `modified`, `deleted`, `renamed` or
+    /// `typechange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// A thin, git-backed view of a project.
@@ -135,6 +152,8 @@ impl Project {
                             oid: entry.id().to_string(),
                             size: blob.content().len() as u64,
                             is_binary: blob.is_binary(),
+                            staged: None,
+                            status: None,
                         });
                     }
                 }
@@ -146,8 +165,21 @@ impl Project {
         Ok(out)
     }
 
-    /// Read the raw bytes of a file at a revision. `rev = None` means HEAD.
+    /// Read the raw bytes of a file at a revision. `rev = None` means HEAD;
+    /// [`WORKTREE`] reads the on-disk file from the open "Current" revision.
     pub fn blob(&self, rev: Option<&str>, path: &str) -> Result<Vec<u8>> {
+        if rev == Some(WORKTREE) {
+            let rel = Path::new(path);
+            // Keep worktree reads inside the repository root.
+            if rel.is_absolute()
+                || rel
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(Error::UnknownRevision(path.to_string()));
+            }
+            return Ok(std::fs::read(self.root.join(rel))?);
+        }
         let tree = self.tree_for(rev)?;
         let entry = tree
             .get_path(Path::new(path))
@@ -156,11 +188,125 @@ impl Project {
         Ok(blob.content().to_vec())
     }
 
+    /// The changed files that make up the open "Current" revision: everything
+    /// that differs between the worktree/index and HEAD.
+    ///
+    /// Untracked files are included (a new part is a change); ignored files are
+    /// not. Each entry reports whether it is already staged into the revision.
+    pub fn working_files(&self) -> Result<Vec<FileEntry>> {
+        if self.repo.is_bare() {
+            return Ok(Vec::new());
+        }
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false)
+            .renames_head_to_index(true)
+            .renames_index_to_workdir(true);
+
+        let statuses = self.repo.statuses(Some(&mut opts))?;
+        let mut out = Vec::with_capacity(statuses.len());
+        for entry in statuses.iter() {
+            let Some(path) = entry.path() else { continue };
+            let status = entry.status();
+            let (oid, size, is_binary) = self.worktree_blob_info(path);
+            out.push(FileEntry {
+                path: path.to_string(),
+                oid,
+                size,
+                is_binary,
+                staged: Some(is_staged(status)),
+                status: Some(change_kind(status).to_string()),
+            });
+        }
+
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    }
+
+    /// Stage a working change into the open "Current" revision (git's index).
+    ///
+    /// A file present on disk is added from the worktree; a missing file is
+    /// staged as a deletion.
+    pub fn stage(&self, path: &str) -> Result<()> {
+        let mut index = self.repo.index()?;
+        let path = Path::new(path);
+        if self.root.join(path).exists() {
+            index.add_path(path)?;
+        } else {
+            index.remove_path(path)?;
+        }
+        index.write()?;
+        Ok(())
+    }
+
+    /// Remove a staged change from the open revision, restoring the index entry
+    /// from HEAD. A file that is new (and therefore absent from HEAD) is
+    /// unstaged entirely.
+    pub fn unstage(&self, path: &str) -> Result<()> {
+        let target = match self.repo.head() {
+            Ok(head) => head.peel(git2::ObjectType::Commit).ok(),
+            Err(_) => None,
+        };
+        self.repo.reset_default(target.as_ref(), [path])?;
+        Ok(())
+    }
+
+    /// Size, binary flag and content id for a working file, preferring the
+    /// on-disk contents and falling back to the staged index entry (for, say, a
+    /// staged then deleted file).
+    fn worktree_blob_info(&self, path: &str) -> (String, u64, bool) {
+        if let Ok(bytes) = std::fs::read(self.root.join(path)) {
+            // Mirror git's own heuristic: binary when a NUL appears in the
+            // first 8000 bytes.
+            let is_binary = bytes.iter().take(8000).any(|&b| b == 0);
+            let oid = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes)
+                .map(|oid| oid.to_string())
+                .unwrap_or_default();
+            return (oid, bytes.len() as u64, is_binary);
+        }
+        if let Ok(index) = self.repo.index() {
+            if let Some(entry) = index.get_path(Path::new(path), 0) {
+                if let Ok(blob) = self.repo.find_blob(entry.id) {
+                    return (entry.id.to_string(), blob.content().len() as u64, blob.is_binary());
+                }
+            }
+        }
+        (String::new(), 0, false)
+    }
+
     fn tree_for(&self, rev: Option<&str>) -> Result<git2::Tree<'_>> {
         match rev {
             Some(r) => Ok(self.repo.revparse_single(r)?.peel_to_tree()?),
             None => Ok(self.repo.head()?.peel_to_tree()?),
         }
+    }
+}
+
+/// True when the status carries a change that has been staged into the index.
+fn is_staged(status: git2::Status) -> bool {
+    status.intersects(
+        git2::Status::INDEX_NEW
+            | git2::Status::INDEX_MODIFIED
+            | git2::Status::INDEX_DELETED
+            | git2::Status::INDEX_RENAMED
+            | git2::Status::INDEX_TYPECHANGE,
+    )
+}
+
+/// Classify a status as one of the working-change kinds the UI understands.
+fn change_kind(status: git2::Status) -> &'static str {
+    use git2::Status;
+    if status.intersects(Status::INDEX_NEW | Status::WT_NEW) {
+        "new"
+    } else if status.intersects(Status::INDEX_DELETED | Status::WT_DELETED) {
+        "deleted"
+    } else if status.intersects(Status::INDEX_RENAMED | Status::WT_RENAMED) {
+        "renamed"
+    } else if status.intersects(Status::INDEX_TYPECHANGE | Status::WT_TYPECHANGE) {
+        "typechange"
+    } else {
+        "modified"
     }
 }
 
@@ -246,6 +392,69 @@ mod tests {
         assert_eq!(revs[0].summary, "second");
         assert_eq!(revs[1].summary, "first");
         assert!(project.branch().is_some());
+    }
+
+    #[test]
+    fn lists_working_changes_then_stages_and_unstages() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+
+        // Modify a tracked file and add an untracked one.
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+        std::fs::write(dir.path().join("b.txt"), b"two").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        let files = project.working_files().unwrap();
+        assert_eq!(files.len(), 2);
+        let a = files.iter().find(|f| f.path == "a.txt").unwrap();
+        assert_eq!(a.staged, Some(false));
+        assert_eq!(a.status.as_deref(), Some("modified"));
+        assert_eq!(a.size, b"one changed".len() as u64);
+        let b = files.iter().find(|f| f.path == "b.txt").unwrap();
+        assert_eq!(b.staged, Some(false));
+        assert_eq!(b.status.as_deref(), Some("new"));
+
+        project.stage("a.txt").unwrap();
+        project.stage("b.txt").unwrap();
+        assert!(project
+            .working_files()
+            .unwrap()
+            .iter()
+            .all(|f| f.staged == Some(true)));
+
+        project.unstage("a.txt").unwrap();
+        let files = project.working_files().unwrap();
+        assert_eq!(
+            files.iter().find(|f| f.path == "a.txt").unwrap().staged,
+            Some(false)
+        );
+        assert_eq!(
+            files.iter().find(|f| f.path == "b.txt").unwrap().staged,
+            Some(true)
+        );
+
+        // Unstaging a new file drops it from the index entirely.
+        project.unstage("b.txt").unwrap();
+        let b = project
+            .working_files()
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == "b.txt")
+            .unwrap();
+        assert_eq!(b.staged, Some(false));
+        assert_eq!(b.status.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn reads_worktree_blob() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        std::fs::write(dir.path().join("a.txt"), b"changed").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        assert_eq!(project.blob(Some(WORKTREE), "a.txt").unwrap(), b"changed");
     }
 
     #[test]

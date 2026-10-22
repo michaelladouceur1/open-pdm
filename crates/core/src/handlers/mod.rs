@@ -122,6 +122,37 @@ impl Default for HandlerRegistry {
     }
 }
 
+/// File extensions OpenPDM treats as project content.
+///
+/// The app is CAD-focused: only files with one of these extensions are listed
+/// in the UI and staged into a revision. Everything else in the working tree
+/// (repo metadata, notes, generated files like the `*.pdmdb` index) is ignored.
+///
+/// This is deliberately broader than the set of registered [`CadHandler`]s —
+/// formats such as STEP/IGES are tracked as project content even before the
+/// core learns to tessellate them. The `allowed_extensions_cover_handlers` test
+/// keeps the two lists from drifting.
+pub const PROJECT_EXTENSIONS: &[&str] = &[
+    // Meshes and interchange formats.
+    "stl", "obj", "ply", "3mf", "gltf", "glb",
+    // FreeCAD.
+    "fcstd",
+    // STEP / IGES.
+    "step", "stp", "iges", "igs",
+    // Native CAD: SolidWorks, Inventor, Creo/NX, CATIA, Fusion, Rhino.
+    "sldprt", "sldasm", "ipt", "iam", "prt", "asm", "catpart", "catproduct", "f3d", "3dm",
+    // Kernel / exchange geometry.
+    "sat", "sab", "x_t", "x_b", "brep", "brp",
+    // 2D drawings.
+    "dxf", "dwg",
+];
+
+/// Whether `path` has an extension that counts as project content.
+pub fn is_project_file(path: &str) -> bool {
+    let ext = extension_of(path);
+    !ext.is_empty() && PROJECT_EXTENSIONS.contains(&ext.as_str())
+}
+
 /// Attributes every handler reports: extension and byte size.
 pub(crate) fn basic_attributes(path: &str, bytes: &[u8]) -> BTreeMap<String, String> {
     let mut attrs = BTreeMap::new();
@@ -164,5 +195,30 @@ mod tests {
         assert_eq!(reg.resolve("a.FCStd").name(), "fcstd");
         assert_eq!(reg.resolve("a.sldprt").name(), "generic");
         assert_eq!(reg.resolve("noext").name(), "generic");
+    }
+
+    #[test]
+    fn identifies_project_files() {
+        assert!(is_project_file("part.stl"));
+        assert!(is_project_file("assembly.SLDPRT"));
+        assert!(is_project_file("drawing.DXF"));
+        assert!(is_project_file("bracket.step"));
+        assert!(!is_project_file("index.pdmdb"));
+        assert!(!is_project_file("README.md"));
+        assert!(!is_project_file(".gitignore"));
+        assert!(!is_project_file("noext"));
+    }
+
+    #[test]
+    fn allowed_extensions_cover_handlers() {
+        let reg = HandlerRegistry::builtin();
+        for (name, extensions) in reg.list() {
+            for ext in extensions {
+                assert!(
+                    is_project_file(&format!("file.{ext}")),
+                    "handler {name} extension {ext} missing from PROJECT_EXTENSIONS"
+                );
+            }
+        }
     }
 }

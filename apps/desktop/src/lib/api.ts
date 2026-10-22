@@ -12,11 +12,19 @@ export interface Revision {
   parents: number;
 }
 
+// Sentinel revision selecting the open, uncommitted "Current" revision. It must
+// match `WORKTREE` in open-pdm-core; passed anywhere a revision oid is accepted.
+export const CURRENT_REV = ":worktree:";
+
 export interface FileEntry {
   path: string;
   oid: string;
   size: number;
   is_binary: boolean;
+  /** Whether the change is staged into the Current revision. Absent for commits. */
+  staged?: boolean;
+  /** Change kind for the Current revision: new, modified, deleted, etc. */
+  status?: string;
 }
 
 export interface ProjectInfo {
@@ -66,6 +74,12 @@ export const getRevisions = (path: string, limit: number) =>
 
 export const getFiles = (path: string, rev: string | null) =>
   invoke<FileEntry[]>("files", { path, rev });
+
+export const stageFile = (path: string, file: string) =>
+  invoke<void>("stage_file", { path, file });
+
+export const unstageFile = (path: string, file: string) =>
+  invoke<void>("unstage_file", { path, file });
 
 export const getMetadata = (path: string, file: string, rev: string | null) =>
   invoke<FileMetadata>("metadata", { path, file, rev });
