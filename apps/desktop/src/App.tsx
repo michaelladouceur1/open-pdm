@@ -241,7 +241,9 @@ function ViewModeButton({ mode, onToggle }: { mode: ViewMode; onToggle: () => vo
 }
 
 export default function App() {
-  const [projectPath, setProjectPath] = useState("/tmp/openpdm-demo");
+  // Default to the demo project on a first run; later launches reopen whichever
+  // project was last loaded.
+  const [projectPath, setProjectPath] = useState(() => getStored("lastProjectPath", "/tmp/openpdm-demo"));
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [selectedRev, setSelectedRev] = useState<string | null>(null);
@@ -280,6 +282,9 @@ export default function App() {
     setStats(null);
     try {
       setInfo(await openProject(path));
+      // Remember the project that actually opened so the next launch can
+      // restore it.
+      setStored("lastProjectPath", path);
       const revs = await getRevisions(path, 50);
       setRevisions(revs);
       const rev = revs[0]?.oid ?? null;

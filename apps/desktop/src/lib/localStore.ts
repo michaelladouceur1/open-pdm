@@ -20,6 +20,8 @@ export type StoreValues = {
   filesView: "detailed" | "compact";
   /** Row density for the Revisions section. */
   revisionsView: "detailed" | "compact";
+  /** Path of the most recently opened project, reopened on the next launch. */
+  lastProjectPath: string;
 };
 
 // A key that identifies a persisted value.
@@ -33,6 +35,7 @@ const STORAGE_KEYS: Record<StoreKey, string> = {
   revisionsCollapsed: "openpdm-revisions-collapsed",
   filesView: "openpdm-files-view",
   revisionsView: "openpdm-revisions-view",
+  lastProjectPath: "openpdm-last-project-path",
 };
 
 /**
