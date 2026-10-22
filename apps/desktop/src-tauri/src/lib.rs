@@ -7,7 +7,7 @@
 
 use base64::Engine as _;
 use open_pdm_core::{
-    FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project, Revision,
+    FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project, Revision, WORKTREE,
 };
 use serde::Serialize;
 
@@ -64,7 +64,23 @@ fn revisions(path: String, limit: usize) -> Result<Vec<Revision>, String> {
 
 #[tauri::command]
 fn files(path: String, rev: Option<String>) -> Result<Vec<FileEntry>, String> {
-    open(&path)?.files_at(rev.as_deref()).map_err(to_err)
+    let project = open(&path)?;
+    if rev.as_deref() == Some(WORKTREE) {
+        return project.working_files().map_err(to_err);
+    }
+    project.files_at(rev.as_deref()).map_err(to_err)
+}
+
+/// Stage a working change into the open "Current" revision.
+#[tauri::command]
+fn stage_file(path: String, file: String) -> Result<(), String> {
+    open(&path)?.stage(&file).map_err(to_err)
+}
+
+/// Unstage a change from the open "Current" revision.
+#[tauri::command]
+fn unstage_file(path: String, file: String) -> Result<(), String> {
+    open(&path)?.unstage(&file).map_err(to_err)
 }
 
 #[tauri::command]
@@ -140,6 +156,8 @@ pub fn run() {
             create_project,
             revisions,
             files,
+            stage_file,
+            unstage_file,
             metadata,
             mesh,
             shape_payloads,
