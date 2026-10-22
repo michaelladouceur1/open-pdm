@@ -200,7 +200,8 @@ gitignored, like the SQLite index), keyed by lower-case extension:
 ```
 
 `{in}` and `{out}` are scratch files the program must read from and write to;
-`{format}` expands to the target (`stl`). The program is run directly (argv, no
+`{format}` expands to the target (`stl`). `program` may be an absolute path or a
+bare executable name resolved from `PATH`. The program is run directly (argv, no
 shell). Converted output is cached under `.openpdm/cache/stl/<converter>/` and
 keyed by the input's git blob oid, so identical parts convert once across
 revisions and switching converters invalidates the cache.
@@ -208,6 +209,8 @@ revisions and switching converters invalidates the cache.
 A ready-to-build reference backend that uses the **free eDrawings Viewer API**
 (no SOLIDWORKS license) lives in
 [`examples/converters/edrawings-to-stl`](examples/converters/edrawings-to-stl).
+It includes build/publish scripts that produce a self-contained `win-x64` exe
+(no .NET runtime required on the target machine).
 
 Without a backend the file still lists and reports metadata; the viewer shows a
 hint explaining how to enable the preview. The CLI exposes the same path:

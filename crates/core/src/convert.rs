@@ -137,7 +137,12 @@ impl Converter for CommandConverter {
             .stderr(Stdio::from(stderr));
 
         let mut child = command.spawn().map_err(|e| {
-            Error::Conversion(format!("failed to run converter '{}': {e}", self.program))
+            Error::Conversion(format!(
+                "could not run converter '{}' ({e}). If it is a bare name, make sure it is \
+                 installed and on PATH; otherwise check the 'program' path in \
+                 .openpdm/converters.json.",
+                self.program
+            ))
         })?;
 
         let deadline = Instant::now() + self.timeout;
@@ -442,6 +447,23 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("boom"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn command_converter_reports_missing_program() {
+        let converter = CommandConverter::new(
+            "openpdm-converter-does-not-exist-9f3a",
+            vec!["{in}".into(), "{out}".into()],
+        );
+        let err = converter
+            .convert(TARGET_STL, "part.sldprt", b"x")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("openpdm-converter-does-not-exist-9f3a"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("PATH"), "unexpected error: {err}");
     }
 
     #[test]

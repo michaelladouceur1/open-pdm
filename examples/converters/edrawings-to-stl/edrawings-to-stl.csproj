@@ -12,15 +12,50 @@
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!--
-      The eDrawings interop assembly ships with the eDrawings Viewer install.
-      Adjust the HintPath below to match your machine, or delete this reference
-      and add a COMReference to the eDrawings control instead (see README.md).
-    -->
+  <!--
+    Publish a single, self-contained executable so end users need no .NET
+    runtime:  dotnet publish -c Release   (see ./publish.ps1 or ./publish.sh).
+    Override the target with -p:RuntimeIdentifier=... if you ever need to.
+  -->
+  <PropertyGroup>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <!--
+    Where the eDrawings interop assembly lives *when building*.
+
+    This is a BUILD-TIME dependency only: at runtime the control is resolved
+    from the registry by its CLSID, so the interop DLL is never shipped (the
+    interop types are embedded below).
+
+    Override it with a property or an environment variable of the same name:
+      dotnet build   -c Release -p:EDrawingsInteropDir="D:\eDrawings"
+      set EDrawingsInteropDir=D:\eDrawings && dotnet build -c Release
+  -->
+  <PropertyGroup>
+    <EDrawingsInteropDir Condition="'$(EDrawingsInteropDir)' == ''">$(ProgramFiles)\SOLIDWORKS Corp\eDrawings</EDrawingsInteropDir>
+    <EDrawingsInteropPath>$(EDrawingsInteropDir)\eDrawings.Interop.EModelViewControl.dll</EDrawingsInteropPath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(EDrawingsInteropPath)')">
     <Reference Include="eDrawings.Interop.EModelViewControl">
-      <HintPath>C:\Program Files\SOLIDWORKS Corp\eDrawings\eDrawings.Interop.EModelViewControl.dll</HintPath>
+      <HintPath>$(EDrawingsInteropPath)</HintPath>
+      <!-- Compile the interop types into this assembly; do not ship the DLL. -->
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <!-- Fail early and clearly when eDrawings is not installed on the build machine. -->
+  <Target Name="EnsureEDrawingsInterop"
+          BeforeTargets="ResolveReferences"
+          Condition="!Exists('$(EDrawingsInteropPath)')">
+    <Error Text="eDrawings interop not found at '$(EDrawingsInteropPath)'. Install eDrawings Viewer, or pass -p:EDrawingsInteropDir=&lt;dir&gt; (or set the EDrawingsInteropDir environment variable)." />
+  </Target>
 
 </Project>

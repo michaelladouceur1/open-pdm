@@ -35,47 +35,100 @@ Solid Edge, so eDrawings will interpret them as Pro/ENGINEER.
 ## Requirements
 
 - Windows (the eDrawings control is Windows-only and 64-bit)
-- .NET 8 SDK
+- .NET 8 SDK — to *build*; not needed to *run* the published exe
 - [eDrawings Viewer](https://www.edrawingsviewer.com/download-edrawings) installed
   (free; no license needed). A newer file needs an eDrawings build at least as new
   as the CAD version that wrote it.
 
+## Building vs. distributing
+
+The `eDrawings.Interop.EModelViewControl.dll` interop assembly is a **build-time
+dependency only**. The compiler needs it to know the shape of `EModelViewControl`,
+but at runtime the control is resolved from the registry by its CLSID — so the
+interop DLL is embedded into this assembly (`EmbedInteropTypes`) and never shipped
+next to the exe.
+
+That means end users of a published exe configure **nothing**: they just need
+eDrawings Viewer installed. Only the *build machine* has to locate the interop
+assembly, which is why its path is a configurable MSBuild property rather than a
+hardcoded `HintPath`.
+
 ## Build
 
-Point the `HintPath` in `edrawings-to-stl.csproj` at the interop assembly that
-ships with your eDrawings install (typically
-`C:\Program Files\SOLIDWORKS Corp\eDrawings\eDrawings.Interop.EModelViewControl.dll`),
-then:
+The build must run on Windows with eDrawings Viewer installed. The interop
+assembly is looked up under `%ProgramFiles%\SOLIDWORKS Corp\eDrawings` by default.
+If yours lives elsewhere, override it with a property **or** an environment
+variable of the same name:
 
+```bat
+dotnet build -c Release -p:EDrawingsInteropDir="D:\eDrawings"
 ```
+
+```bat
+set EDrawingsInteropDir=D:\eDrawings
 dotnet build -c Release
 ```
 
-The executable lands at
-`bin/Release/net8.0-windows/edrawings-to-stl.exe`.
+If the interop assembly cannot be found the build fails with a clear message
+telling you which path it looked in.
 
-If you prefer to generate the interop from the registered type library, delete the
-`Reference` in the csproj and add a `COMReference` to the eDrawings control
-(CLSID `22945A69-1191-4DCF-9E6F-409BDE94D101`).
+## Publish a distributable exe
+
+The csproj defaults to a **self-contained, single-file `win-x64`** publish, so
+end users need no .NET runtime. Use a wrapper script (which also copies the result
+to `dist/`):
+
+```powershell
+./publish.ps1
+```
+
+```sh
+./publish.sh            # Git Bash / WSL
+```
+
+or invoke MSBuild directly:
+
+```sh
+dotnet publish -c Release
+```
+
+The output is `bin/Release/net8.0-windows/win-x64/publish/edrawings-to-stl.exe`
+(and a copy at `dist/edrawings-to-stl.exe`), roughly 60–70 MB. To override the
+eDrawings location, pass it through the script or MSBuild:
+
+```sh
+EDrawingsInteropDir='D:\eDrawings' ./publish.sh
+```
+
+Consider **code-signing** the exe so Windows SmartScreen does not warn users:
+
+```bat
+signtool sign /fd SHA256 /a dist\edrawings-to-stl.exe
+```
 
 ## Wire it into OpenPDM
 
-Create `<project>/.openpdm/converters.json`:
+Install eDrawings Viewer and put the published exe somewhere on `PATH` (or use an
+absolute path). Then create `<project>/.openpdm/converters.json`:
 
 ```json
 {
   "converters": {
-    "sldprt": { "program": "C:\\tools\\edrawings-to-stl.exe", "args": ["{in}", "{out}"] },
-    "sldasm": { "program": "C:\\tools\\edrawings-to-stl.exe", "args": ["{in}", "{out}"] },
-    "prt":    { "program": "C:\\tools\\edrawings-to-stl.exe", "args": ["{in}", "{out}"] },
-    "asm":    { "program": "C:\\tools\\edrawings-to-stl.exe", "args": ["{in}", "{out}"] }
+    "sldprt": { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "sldasm": { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "prt":    { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "asm":    { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] }
   }
 }
 ```
 
+`program` may be a bare executable name resolved from `PATH` or an absolute path.
 `{in}` and `{out}` are substituted with scratch paths for each conversion; the
 program is run directly (no shell). Converted output is cached by content, so each
 unique part converts once.
+
+If the program cannot be launched, OpenPDM surfaces a clear error pointing at
+`PATH` and `converters.json`.
 
 You can also try it from the CLI without the app:
 
@@ -100,3 +153,5 @@ The event-driven flow follows the well-known
 - STL flattens assemblies — no part names, colours or units.
 - Running one process per part carries eDrawings' startup cost; OpenPDM's
   content-addressed cache means each unique part only pays it once.
+- OpenPDM does **not** bundle this binary. It is a reference you build and install
+  yourself; a future OpenPDM plugin manager may automate that.
