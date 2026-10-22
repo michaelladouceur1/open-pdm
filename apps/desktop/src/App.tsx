@@ -560,7 +560,7 @@ export default function App() {
           </div>
         )}
 
-        <main className="grid min-h-0 flex-1 grid-cols-[minmax(240px,320px)_1fr]">
+        <main className="grid min-h-0 flex-1 grid-cols-[minmax(240px,400px)_1fr]">
           <aside ref={leftColumnRef} className="flex min-h-0 flex-col border-r">
             <section
               className={cn("flex min-h-0 flex-col", revisionsCollapsed ? "flex-1" : "shrink-0")}
