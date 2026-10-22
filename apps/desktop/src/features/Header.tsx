@@ -1,0 +1,65 @@
+import {
+  DatabaseIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  MoonIcon,
+  SunIcon,
+} from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { useApp } from "./AppContext";
+
+// Top bar: product mark, editable project path, project actions, the theme
+// toggle and a busy indicator while a project operation is in flight.
+export default function Header() {
+  const { projectPath, setProjectPath, loadPath, newProject, openProjectPicker, buildIndex, info, theme, setTheme, busy } =
+    useApp();
+
+  const themeLabel = theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+
+  return (
+    <header className="flex items-center gap-2 border-b bg-card px-3 py-2">
+      <div className="px-1 text-sm font-semibold tracking-wide text-primary">OpenPDM</div>
+      <Separator orientation="vertical" className="mx-0.5 h-5" />
+      <Input
+        className="h-8 min-w-0 flex-1 font-mono"
+        value={projectPath}
+        placeholder="/path/to/project"
+        onChange={(e) => setProjectPath(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && loadPath(projectPath)}
+      />
+      <Button onClick={newProject} disabled={busy}>
+        <FolderPlusIcon data-icon="inline-start" />
+        New
+      </Button>
+      <Button variant="outline" onClick={openProjectPicker} disabled={busy}>
+        <FolderOpenIcon data-icon="inline-start" />
+        Open
+      </Button>
+      <Button variant="outline" onClick={buildIndex} disabled={busy || !info}>
+        <DatabaseIcon data-icon="inline-start" />
+        Index
+      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
+          onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+          aria-label={themeLabel}
+        >
+          {theme === "light" ? <SunIcon /> : <MoonIcon />}
+        </TooltipTrigger>
+        <TooltipContent>{themeLabel}</TooltipContent>
+      </Tooltip>
+      {busy && (
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Spinner className="size-3.5" />
+          working…
+        </span>
+      )}
+    </header>
+  );
+}
