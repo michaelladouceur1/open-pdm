@@ -17,8 +17,7 @@ pub mod index;
 pub mod mesh;
 
 pub use convert::{
-    load_project_converter, CachedConverter, CommandConverter, Converter, NullConverter,
-    TARGET_STL,
+    CachedConverter, CommandConverter, Converter, ConverterRegistry, NullConverter, TARGET_STL,
 };
 pub use error::{Error, Result};
 pub use git::{FileEntry, Project, Revision, WORKTREE};

@@ -13,6 +13,7 @@
 //! revisions) and invalidates automatically when the converter changes. Like
 //! the SQLite index, the cache is machine-local and never committed.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -253,11 +254,17 @@ impl Converter for CachedConverter {
 }
 
 /// `converters.json` as read from `<root>/.openpdm/converters.json`.
+///
+/// The file maps a file extension (case-insensitive, no dot) to the program
+/// that converts it:
+///
+/// ```json
+/// { "converters": { "sldprt": { "program": "to-stl", "args": ["{in}", "{out}"] } } }
+/// ```
 #[derive(Deserialize)]
 struct ConvertersConfig {
-    /// Converter used for SolidWorks parts/assemblies.
     #[serde(default)]
-    sldprt: Option<CommandSpec>,
+    converters: BTreeMap<String, CommandSpec>,
 }
 
 #[derive(Deserialize)]
@@ -267,25 +274,80 @@ struct CommandSpec {
     args: Vec<String>,
 }
 
-/// Load the project's external converter from `<root>/.openpdm/converters.json`.
+/// Per-format external converters loaded from a project's `converters.json`.
 ///
-/// The config lives beside the (gitignored) SQLite index and is machine-local.
-/// When it is missing or does not configure a SolidWorks converter, a
-/// [`NullConverter`] is returned so proprietary files degrade to metadata only.
-pub fn load_project_converter(root: &Path) -> Arc<dyn Converter> {
-    let config_path = root.join(".openpdm").join("converters.json");
-    let Ok(text) = std::fs::read_to_string(&config_path) else {
-        return Arc::new(NullConverter);
-    };
-    let Ok(config) = serde_json::from_str::<ConvertersConfig>(&text) else {
-        return Arc::new(NullConverter);
-    };
-    match config.sldprt {
-        Some(spec) if !spec.program.is_empty() => Arc::new(CachedConverter::new(
-            Arc::new(CommandConverter::new(spec.program, spec.args)),
-            root.join(".openpdm").join("cache"),
-        )),
-        _ => Arc::new(NullConverter),
+/// Backends are keyed by lower-case file extension, so a single
+/// [`ConvertibleHandler`](crate::handlers::converted::ConvertibleHandler) can
+/// route any allowlisted proprietary format to whichever engine the user has
+/// configured (SolidWorks, Inventor, Creo/NX, CATIA, kernel formats, …).
+pub struct ConverterRegistry {
+    backends: BTreeMap<String, Arc<dyn Converter>>,
+}
+
+impl ConverterRegistry {
+    /// A registry with no configured backends; every format degrades to
+    /// metadata only.
+    pub fn empty() -> Self {
+        Self {
+            backends: BTreeMap::new(),
+        }
+    }
+
+    /// Build a registry from explicit `(extension, converter)` pairs.
+    pub fn from_backends<I>(backends: I) -> Self
+    where
+        I: IntoIterator<Item = (String, Arc<dyn Converter>)>,
+    {
+        Self {
+            backends: backends
+                .into_iter()
+                .map(|(format, converter)| (format.to_ascii_lowercase(), converter))
+                .collect(),
+        }
+    }
+
+    /// Load a project's converters from `<root>/.openpdm/converters.json`.
+    ///
+    /// The config lives beside the (gitignored) SQLite index and is machine
+    /// local. A missing or malformed file yields an empty registry, so
+    /// proprietary files degrade to metadata only.
+    pub fn load(root: &Path) -> Self {
+        let config_path = root.join(".openpdm").join("converters.json");
+        let Ok(text) = std::fs::read_to_string(&config_path) else {
+            return Self::empty();
+        };
+        let Ok(config) = serde_json::from_str::<ConvertersConfig>(&text) else {
+            return Self::empty();
+        };
+        let cache_root = root.join(".openpdm").join("cache");
+        let backends = config
+            .converters
+            .into_iter()
+            .filter(|(_, spec)| !spec.program.is_empty())
+            .map(|(format, spec)| {
+                let backend: Arc<dyn Converter> = Arc::new(CachedConverter::new(
+                    Arc::new(CommandConverter::new(spec.program, spec.args)),
+                    cache_root.clone(),
+                ));
+                (format.to_ascii_lowercase(), backend)
+            })
+            .collect();
+        Self { backends }
+    }
+
+    /// The converter configured for `format` (case-insensitive), if any.
+    pub fn converter_for(&self, format: &str) -> Option<Arc<dyn Converter>> {
+        self.backends.get(&format.to_ascii_lowercase()).cloned()
+    }
+
+    /// Whether any backend is configured.
+    pub fn is_empty(&self) -> bool {
+        self.backends.is_empty()
+    }
+
+    /// Configured formats (lower-case extensions), for introspection.
+    pub fn formats(&self) -> impl Iterator<Item = &str> {
+        self.backends.keys().map(String::as_str)
     }
 }
 
@@ -380,5 +442,33 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("boom"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn registry_loads_per_format_backends() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".openpdm")).unwrap();
+        std::fs::write(
+            dir.path().join(".openpdm").join("converters.json"),
+            r#"{ "converters": {
+                "sldprt": { "program": "sw", "args": ["{in}", "{out}"] },
+                "PRT": { "program": "creo" }
+            } }"#,
+        )
+        .unwrap();
+
+        let registry = ConverterRegistry::load(dir.path());
+        assert!(!registry.is_empty());
+        assert_eq!(registry.converter_for("sldprt").unwrap().id(), "command:sw");
+        // Lookup is case-insensitive.
+        assert!(registry.converter_for("SLDPRT").is_some());
+        assert_eq!(registry.converter_for("prt").unwrap().id(), "command:creo");
+        assert!(registry.converter_for("catpart").is_none());
+    }
+
+    #[test]
+    fn registry_without_config_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(ConverterRegistry::load(dir.path()).is_empty());
     }
 }

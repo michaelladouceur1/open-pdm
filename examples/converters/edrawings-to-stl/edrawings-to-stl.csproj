@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- eDrawings and its API are Windows-only, and the control is 64-bit. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>edrawings-to-stl</AssemblyName>
+    <RootNamespace>EDrawingsToStl</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The eDrawings interop assembly ships with the eDrawings Viewer install.
+      Adjust the HintPath below to match your machine, or delete this reference
+      and add a COMReference to the eDrawings control instead (see README.md).
+    -->
+    <Reference Include="eDrawings.Interop.EModelViewControl">
+      <HintPath>C:\Program Files\SOLIDWORKS Corp\eDrawings\eDrawings.Interop.EModelViewControl.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

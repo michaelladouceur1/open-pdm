@@ -18,7 +18,8 @@ repository through to a live 3D preview.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata) and
   FreeCAD `.FCStd` (document metadata + B-rep shapes), with a generic fallback
-  for everything else. SolidWorks `.sldprt`/`.sldasm` previews are delegated to a
+  for everything else. Native/proprietary CAD formats (SolidWorks, Inventor,
+  Creo/NX, CATIA, kernel formats, …) are previewed by delegating to a
   user-configured external converter (see below); without one they still list
   and report metadata.
 - **Desktop app (Tauri v2 + React + Tailwind + shadcn/ui + three.js)** — browse
@@ -175,22 +176,25 @@ payloads through `shape_payloads`. The desktop viewer feeds them to
 the first B-rep preview. Assemblies that only link to external parts carry no
 embedded shapes and therefore have no 3D preview.
 
-### SolidWorks (`.sldprt` / `.sldasm`) via an external converter
+### Native CAD formats via an external converter
 
-SolidWorks files are proprietary and stay proprietary: the core has no parser for
-them, so the `sldprt` handler delegates to a **user-configured external command**
-that produces an intermediate STL, then reuses the STL handler to build the mesh.
-There is deliberately no bundled dependency on SolidWorks, eDrawings or a
-commercial SDK — you point OpenPDM at whatever engine you own.
+Formats the core cannot parse itself — SolidWorks (`.sldprt`/`.sldasm`),
+Inventor, Creo/NX, CATIA, kernel/exchange geometry (Parasolid, ACIS, STEP, …) —
+are handled by a single converter-backed handler. It stays format-agnostic: you
+configure an **external command** per format that produces an intermediate STL,
+and the handler reuses the STL parser to build the mesh. There is deliberately no
+bundled dependency on SolidWorks, eDrawings or a commercial SDK — you point
+OpenPDM at whatever engine you own.
 
-Configure it in `<project>/.openpdm/converters.json` (machine-local and
-gitignored, like the SQLite index):
+Configure backends in `<project>/.openpdm/converters.json` (machine-local and
+gitignored, like the SQLite index), keyed by lower-case extension:
 
 ```json
 {
-  "sldprt": {
-    "program": "sldprt-to-stl",
-    "args": ["--in", "{in}", "--out", "{out}"]
+  "converters": {
+    "sldprt":  { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "sldasm":  { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "catpart": { "program": "hoops-exchange-to-stl", "args": ["{in}", "{out}"] }
   }
 }
 ```
@@ -201,7 +205,11 @@ shell). Converted output is cached under `.openpdm/cache/stl/<converter>/` and
 keyed by the input's git blob oid, so identical parts convert once across
 revisions and switching converters invalidates the cache.
 
-Without a converter the file still lists and reports metadata; the viewer shows a
+A ready-to-build reference backend that uses the **free eDrawings Viewer API**
+(no SOLIDWORKS license) lives in
+[`examples/converters/edrawings-to-stl`](examples/converters/edrawings-to-stl).
+
+Without a backend the file still lists and reports metadata; the viewer shows a
 hint explaining how to enable the preview. The CLI exposes the same path:
 `openpdm meta <repo> part.sldprt` and `openpdm mesh <repo> part.sldprt`.
 
