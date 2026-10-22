@@ -7,7 +7,8 @@
 
 use base64::Engine as _;
 use open_pdm_core::{
-    FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project, Revision, WORKTREE,
+    is_project_file, FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project,
+    Revision, WORKTREE,
 };
 use serde::Serialize;
 
@@ -62,13 +63,23 @@ fn revisions(path: String, limit: usize) -> Result<Vec<Revision>, String> {
     open(&path)?.revisions(limit).map_err(to_err)
 }
 
+/// List the project files at a revision, or the changed files of the open
+/// "Current" revision when `rev` is [`WORKTREE`].
+///
+/// Only files OpenPDM recognises as project content (see
+/// [`open_pdm_core::is_project_file`]) are returned; repository metadata and
+/// generated files such as the `*.pdmdb` index are never shown or staged.
 #[tauri::command]
 fn files(path: String, rev: Option<String>) -> Result<Vec<FileEntry>, String> {
     let project = open(&path)?;
-    if rev.as_deref() == Some(WORKTREE) {
-        return project.working_files().map_err(to_err);
+    let mut entries = if rev.as_deref() == Some(WORKTREE) {
+        project.working_files()
+    } else {
+        project.files_at(rev.as_deref())
     }
-    project.files_at(rev.as_deref()).map_err(to_err)
+    .map_err(to_err)?;
+    entries.retain(|entry| is_project_file(&entry.path));
+    Ok(entries)
 }
 
 /// Stage a working change into the open "Current" revision.

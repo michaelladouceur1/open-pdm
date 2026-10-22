@@ -17,6 +17,8 @@ pub mod mesh;
 
 pub use error::{Error, Result};
 pub use git::{FileEntry, Project, Revision, WORKTREE};
-pub use handlers::{CadHandler, FileMetadata, HandlerRegistry, ShapePayload};
+pub use handlers::{
+    is_project_file, CadHandler, FileMetadata, HandlerRegistry, ShapePayload, PROJECT_EXTENSIONS,
+};
 pub use index::{Index, IndexStats};
 pub use mesh::Mesh;
