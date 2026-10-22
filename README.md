@@ -18,7 +18,9 @@ repository through to a live 3D preview.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata) and
   FreeCAD `.FCStd` (document metadata + B-rep shapes), with a generic fallback
-  for everything else.
+  for everything else. SolidWorks `.sldprt`/`.sldasm` previews are delegated to a
+  user-configured external converter (see below); without one they still list
+  and report metadata.
 - **Desktop app (Tauri v2 + React + Tailwind + shadcn/ui + three.js)** — browse
   revisions and files, inspect extracted metadata, and preview meshes in a 3D
   viewport. FreeCAD B-rep shapes are tessellated in the webview with
@@ -35,8 +37,8 @@ repository through to a live 3D preview.
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
 Not yet implemented (by design, see the plan): committing the open revision,
-`git-lfs` transfer and locking, STEP/IGES tessellation, sidecar handlers, remote
-providers, thumbnails.
+`git-lfs` transfer and locking, STEP/IGES tessellation, native in-process parsing
+of proprietary formats, remote providers, thumbnails.
 
 ## Architecture
 
@@ -57,7 +59,7 @@ Design constraints baked in from the start:
 - **Content-addressing everywhere** (blob oid identity), so a future shared
   "vault" repo or cross-project BOM is a data-model change, not a rewrite.
 - **Format-agnostic core**: nothing about SolidWorks/STEP etc. leaks into the
-  core; it all lives in handlers (and, later, sidecars).
+  core; it all lives in handlers (and external converters).
 
 ## Repository layout
 
@@ -158,8 +160,8 @@ pub trait CadHandler: Send + Sync {
 ```
 
 Adding a format means implementing this trait and registering it; the core and
-UI do not change. Proprietary formats (SolidWorks, Inventor, …) are intended to
-be handled later via a sidecar/JSON-RPC adapter rather than in-process parsing.
+UI do not change. Proprietary formats the core cannot parse itself are handled by
+delegating to an external converter rather than in-process parsing (see below).
 
 ### FreeCAD documents (`.FCStd`)
 
@@ -172,6 +174,36 @@ payloads through `shape_payloads`. The desktop viewer feeds them to
 `occt-import-js`, which tessellates in the webview; the wasm is loaded lazily, on
 the first B-rep preview. Assemblies that only link to external parts carry no
 embedded shapes and therefore have no 3D preview.
+
+### SolidWorks (`.sldprt` / `.sldasm`) via an external converter
+
+SolidWorks files are proprietary and stay proprietary: the core has no parser for
+them, so the `sldprt` handler delegates to a **user-configured external command**
+that produces an intermediate STL, then reuses the STL handler to build the mesh.
+There is deliberately no bundled dependency on SolidWorks, eDrawings or a
+commercial SDK — you point OpenPDM at whatever engine you own.
+
+Configure it in `<project>/.openpdm/converters.json` (machine-local and
+gitignored, like the SQLite index):
+
+```json
+{
+  "sldprt": {
+    "program": "sldprt-to-stl",
+    "args": ["--in", "{in}", "--out", "{out}"]
+  }
+}
+```
+
+`{in}` and `{out}` are scratch files the program must read from and write to;
+`{format}` expands to the target (`stl`). The program is run directly (argv, no
+shell). Converted output is cached under `.openpdm/cache/stl/<converter>/` and
+keyed by the input's git blob oid, so identical parts convert once across
+revisions and switching converters invalidates the cache.
+
+Without a converter the file still lists and reports metadata; the viewer shows a
+hint explaining how to enable the preview. The CLI exposes the same path:
+`openpdm meta <repo> part.sldprt` and `openpdm mesh <repo> part.sldprt`.
 
 ## License
 

@@ -10,12 +10,16 @@
 pub mod fcstd;
 pub mod generic;
 pub mod obj;
+pub mod sldprt;
 pub mod stl;
 
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::convert::{self, Converter, NullConverter};
 use crate::{Mesh, Result};
 
 /// Format-agnostic metadata extracted from a file.
@@ -84,16 +88,30 @@ pub struct HandlerRegistry {
 }
 
 impl HandlerRegistry {
-    /// The default set of handlers: STL, OBJ, FreeCAD, and a catch-all fallback.
+    /// The default set of handlers: STL, OBJ, FreeCAD, SolidWorks (metadata
+    /// only — no converter) and a catch-all fallback.
     pub fn builtin() -> Self {
+        Self::with_converter(Arc::new(NullConverter))
+    }
+
+    /// Like [`Self::builtin`], but with `converter` backing the SolidWorks
+    /// handler so `.sldprt`/`.sldasm` files can be previewed.
+    pub fn with_converter(converter: Arc<dyn Converter>) -> Self {
         Self {
             handlers: vec![
                 Box::new(stl::StlHandler),
                 Box::new(obj::ObjHandler),
                 Box::new(fcstd::FcstdHandler),
+                Box::new(sldprt::SldprtHandler::new(converter)),
                 Box::new(generic::GenericHandler),
             ],
         }
+    }
+
+    /// Registry for a project, loading its external converter from
+    /// `<root>/.openpdm/converters.json` (see [`crate::convert`]).
+    pub fn for_project(root: &Path) -> Self {
+        Self::with_converter(convert::load_project_converter(root))
     }
 
     /// Find the handler for `path`, falling back to the generic handler.
@@ -193,7 +211,9 @@ mod tests {
         assert_eq!(reg.resolve("a.obj").name(), "obj");
         assert_eq!(reg.resolve("a.fcstd").name(), "fcstd");
         assert_eq!(reg.resolve("a.FCStd").name(), "fcstd");
-        assert_eq!(reg.resolve("a.sldprt").name(), "generic");
+        assert_eq!(reg.resolve("a.sldprt").name(), "sldprt");
+        assert_eq!(reg.resolve("a.SLDPRT").name(), "sldprt");
+        assert_eq!(reg.resolve("a.sldasm").name(), "sldprt");
         assert_eq!(reg.resolve("noext").name(), "generic");
     }
 

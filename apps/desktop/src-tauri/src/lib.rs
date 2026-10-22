@@ -30,6 +30,12 @@ fn open(path: &str) -> Result<Project, String> {
     Project::open(path).map_err(to_err)
 }
 
+/// Handler registry for a project, including its configured external converter
+/// (see `<root>/.openpdm/converters.json`). Enables `.sldprt`/`.sldasm` previews.
+fn registry(project: &Project) -> HandlerRegistry {
+    HandlerRegistry::for_project(project.root())
+}
+
 /// Flatten a [`Project`] for transport to the UI.
 fn project_info(project: &Project) -> ProjectInfo {
     let head = project.head_revision().ok();
@@ -108,7 +114,7 @@ fn commit(path: String, message: String) -> Result<Revision, String> {
 fn metadata(path: String, file: String, rev: Option<String>) -> Result<FileMetadata, String> {
     let project = open(&path)?;
     let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-    let registry = HandlerRegistry::builtin();
+    let registry = registry(&project);
     registry
         .resolve(&file)
         .metadata(&file, &bytes)
@@ -119,7 +125,7 @@ fn metadata(path: String, file: String, rev: Option<String>) -> Result<FileMetad
 fn mesh(path: String, file: String, rev: Option<String>) -> Result<Option<Mesh>, String> {
     let project = open(&path)?;
     let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-    let registry = HandlerRegistry::builtin();
+    let registry = registry(&project);
     registry.resolve(&file).mesh(&file, &bytes).map_err(to_err)
 }
 
@@ -145,7 +151,7 @@ fn shape_payloads(
 ) -> Result<Vec<ShapePayloadDto>, String> {
     let project = open(&path)?;
     let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-    let registry = HandlerRegistry::builtin();
+    let registry = registry(&project);
     let payloads = registry
         .resolve(&file)
         .shape_payloads(&file, &bytes)

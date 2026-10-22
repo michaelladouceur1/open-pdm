@@ -16,6 +16,9 @@ thiserror = { workspace = true }
 # `Document.xml` manifest plus per-shape B-rep (`.brp`) payloads.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 quick-xml = "0.37"
+# External converter support (proprietary formats): scratch files for the
+# input/output of a user-configured converter process.
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"
