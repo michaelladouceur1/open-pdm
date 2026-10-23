@@ -69,19 +69,27 @@ fn revisions(path: String, limit: usize) -> Result<Vec<Revision>, String> {
     open(&path)?.revisions(limit).map_err(to_err)
 }
 
-/// List the project files at a revision, or the changed files of the open
-/// "Current" revision when `rev` is [`WORKTREE`].
+/// List the project files for a revision.
+///
+/// With `all` falsy this is the revision's *changed* files: the open
+/// "Current" revision's working changes (staged and unstaged), or a commit's
+/// diff against its first parent. With `all` truthy it lists every project
+/// file: the whole working tree for the Current revision, or the whole tree
+/// for a commit (its changed files marked with a `status`).
 ///
 /// Only files OpenPDM recognises as project content (see
 /// [`open_pdm_core::is_project_file`]) are returned; repository metadata and
 /// generated files such as the `*.pdmdb` index are never shown or staged.
 #[tauri::command]
-fn files(path: String, rev: Option<String>) -> Result<Vec<FileEntry>, String> {
+fn files(path: String, rev: Option<String>, all: Option<bool>) -> Result<Vec<FileEntry>, String> {
     let project = open(&path)?;
-    let mut entries = if rev.as_deref() == Some(WORKTREE) {
-        project.working_files()
-    } else {
-        project.files_at(rev.as_deref())
+    let all = all.unwrap_or(false);
+    let mut entries = match rev.as_deref() {
+        Some(WORKTREE) if all => project.all_worktree_files(),
+        Some(WORKTREE) => project.working_files(),
+        Some(r) if all => project.annotated_files_at(r),
+        Some(r) => project.changed_files_at(r),
+        None => project.files_at(None),
     }
     .map_err(to_err)?;
     entries.retain(|entry| is_project_file(&entry.path));

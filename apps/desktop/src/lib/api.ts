@@ -72,8 +72,8 @@ export const createProject = (path: string) =>
 export const getRevisions = (path: string, limit: number) =>
   invoke<Revision[]>("revisions", { path, limit });
 
-export const getFiles = (path: string, rev: string | null) =>
-  invoke<FileEntry[]>("files", { path, rev });
+export const getFiles = (path: string, rev: string | null, all = false) =>
+  invoke<FileEntry[]>("files", { path, rev, all });
 
 export const stageFile = (path: string, file: string) =>
   invoke<void>("stage_file", { path, file });

@@ -1,3 +1,4 @@
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -222,6 +223,148 @@ impl Project {
 
         out.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(out)
+    }
+
+    /// Every project file in the working tree (tracked and untracked), with the
+    /// staging/`status` fields populated only for files that changed.
+    ///
+    /// Backs the Files panel's "show all files" view of the open "Current"
+    /// revision, where unchanged files appear alongside the working changes.
+    /// Untracked files are included; ignored files are not.
+    pub fn all_worktree_files(&self) -> Result<Vec<FileEntry>> {
+        if self.repo.is_bare() {
+            return Ok(Vec::new());
+        }
+        // Changed files already carry the staging flag and change kind.
+        let changed: HashMap<String, FileEntry> = self
+            .working_files()?
+            .into_iter()
+            .map(|file| (file.path.clone(), file))
+            .collect();
+
+        // Tracked paths come from the index; untracked paths from status.
+        let mut paths: BTreeSet<String> = BTreeSet::new();
+        let index = self.repo.index()?;
+        for entry in index.iter() {
+            if let Ok(path) = std::str::from_utf8(&entry.path) {
+                paths.insert(path.to_string());
+            }
+        }
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
+        for entry in self.repo.statuses(Some(&mut opts))?.iter() {
+            if let Some(path) = entry.path() {
+                paths.insert(path.to_string());
+            }
+        }
+
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            if let Some(file) = changed.get(&path) {
+                out.push(file.clone());
+            } else {
+                let (oid, size, is_binary) = self.worktree_blob_info(&path);
+                out.push(FileEntry {
+                    path,
+                    oid,
+                    size,
+                    is_binary,
+                    staged: None,
+                    status: None,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    }
+
+    /// The files a commit changed relative to its first parent (or the empty
+    /// tree for a root commit).
+    ///
+    /// Each entry carries the change `status` (`new`, `modified`, `deleted`,
+    /// `renamed` or `typechange`); `staged` is left `None` because commits have
+    /// no index/working state. Backs the Files panel's default view of a
+    /// committed revision.
+    pub fn changed_files_at(&self, rev: &str) -> Result<Vec<FileEntry>> {
+        let commit = self.repo.revparse_single(rev)?.peel_to_commit()?;
+        let tree = commit.tree()?;
+        let parent_tree = match commit.parent(0) {
+            Ok(parent) => Some(parent.tree()?),
+            Err(_) => None,
+        };
+        let diff = self
+            .repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+
+        let mut out: Vec<FileEntry> = Vec::new();
+        diff.foreach(
+            &mut |delta, _| {
+                let (path, kind) = match delta.status() {
+                    git2::Delta::Added => (delta.new_file().path(), "new"),
+                    git2::Delta::Deleted => (delta.old_file().path(), "deleted"),
+                    git2::Delta::Renamed => (delta.new_file().path(), "renamed"),
+                    git2::Delta::Typechange => (delta.new_file().path(), "typechange"),
+                    _ => (delta.new_file().path(), "modified"),
+                };
+                if let Some(path) = path {
+                    let path = path.to_string_lossy().replace('\\', "/");
+                    let (oid, size, is_binary) = self.tree_blob_info(&tree, &path);
+                    out.push(FileEntry {
+                        path,
+                        oid,
+                        size,
+                        is_binary,
+                        staged: None,
+                        status: Some(kind.to_string()),
+                    });
+                }
+                true
+            },
+            None,
+            None,
+            None,
+        )?;
+
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    }
+
+    /// The full tree at `rev`, annotated with `status` on the files the
+    /// revision changed relative to its first parent.
+    ///
+    /// Backs the Files panel's "show all files" view of a committed revision:
+    /// the committed changes are highlighted while the unchanged files that make
+    /// up the rest of the tree are listed too.
+    pub fn annotated_files_at(&self, rev: &str) -> Result<Vec<FileEntry>> {
+        let mut files = self.files_at(Some(rev))?;
+        let mut statuses: HashMap<String, String> = self
+            .changed_files_at(rev)?
+            .into_iter()
+            .filter_map(|file| file.status.map(|status| (file.path, status)))
+            .collect();
+        for file in &mut files {
+            if let Some(status) = statuses.remove(&file.path) {
+                file.status = Some(status);
+            }
+        }
+        Ok(files)
+    }
+
+    /// Size, binary flag and content id for `path` in a committed tree. Empty
+    /// when the path is absent (e.g. a file the commit deleted).
+    fn tree_blob_info(&self, tree: &git2::Tree<'_>, path: &str) -> (String, u64, bool) {
+        if let Ok(entry) = tree.get_path(Path::new(path)) {
+            if let Ok(blob) = self.repo.find_blob(entry.id()) {
+                return (
+                    entry.id().to_string(),
+                    blob.content().len() as u64,
+                    blob.is_binary(),
+                );
+            }
+        }
+        (String::new(), 0, false)
     }
 
     /// Stage a working change into the open "Current" revision (git's index).
@@ -489,6 +632,84 @@ mod tests {
             .unwrap();
         assert_eq!(b.staged, Some(false));
         assert_eq!(b.status.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn lists_all_worktree_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        commit_file(&repo, "b.txt", b"two", "second");
+
+        // Modify one tracked file and add one untracked file.
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+        std::fs::write(dir.path().join("c.txt"), b"three").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        let files = project.all_worktree_files().unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["a.txt", "b.txt", "c.txt"]);
+
+        // A working change keeps its staging/status fields.
+        let a = files.iter().find(|f| f.path == "a.txt").unwrap();
+        assert_eq!(a.staged, Some(false));
+        assert_eq!(a.status.as_deref(), Some("modified"));
+        // An unchanged committed file is listed without a change.
+        let b = files.iter().find(|f| f.path == "b.txt").unwrap();
+        assert_eq!(b.staged, None);
+        assert_eq!(b.status, None);
+        // An untracked file is listed as a new change.
+        let c = files.iter().find(|f| f.path == "c.txt").unwrap();
+        assert_eq!(c.staged, Some(false));
+        assert_eq!(c.status.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn lists_a_commits_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        commit_file(&repo, "b.txt", b"two", "second");
+
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+        let project = Project::open(dir.path()).unwrap();
+        project.stage("a.txt").unwrap();
+        let revision = project.commit("update a").unwrap();
+
+        let files = project.changed_files_at(&revision.oid).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "a.txt");
+        assert_eq!(files[0].status.as_deref(), Some("modified"));
+        assert_eq!(files[0].size, b"one changed".len() as u64);
+        assert_eq!(files[0].staged, None);
+    }
+
+    #[test]
+    fn annotates_a_commits_tree_with_its_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        commit_file(&repo, "b.txt", b"two", "second");
+
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+        let project = Project::open(dir.path()).unwrap();
+        project.stage("a.txt").unwrap();
+        let revision = project.commit("update a").unwrap();
+
+        let files = project.annotated_files_at(&revision.oid).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["a.txt", "b.txt"]);
+        // The changed file is annotated; the untouched one is not.
+        assert_eq!(
+            files
+                .iter()
+                .find(|f| f.path == "a.txt")
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("modified")
+        );
+        assert_eq!(files.iter().find(|f| f.path == "b.txt").unwrap().status, None);
     }
 
     #[test]

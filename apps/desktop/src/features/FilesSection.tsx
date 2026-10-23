@@ -1,17 +1,19 @@
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { formatBytes, shortOid } from "@/lib/format";
+import { shortOid } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useApp } from "./AppContext";
 import ChangeRow from "./components/ChangeRow";
-import ListRow from "./components/ListRow";
+import CommittedFileRow from "./components/CommittedFileRow";
 import SectionHeader from "./components/SectionHeader";
+import ShowAllFilesButton from "./components/ShowAllFilesButton";
 import ViewModeButton from "./components/ViewModeButton";
 import { SECTION_MIN_HEIGHT } from "./constants";
 
 // Files section of the left column. Shows the changed files for the open
-// "Current" revision (with per-row staging) or the tracked files for a
-// committed revision.
+// revision (with per-row staging for the "Current" revision). The "show all"
+// toggle widens this to every project file: the whole working tree for the
+// Current revision, or the whole committed tree for an earlier revision.
 export default function FilesSection() {
   const {
     files,
@@ -20,6 +22,8 @@ export default function FilesSection() {
     isCurrent,
     filesView,
     setFilesView,
+    showAllFiles,
+    toggleShowAllFiles,
     filesCollapsed,
     setFilesCollapsed,
     revisionsCollapsed,
@@ -45,10 +49,13 @@ export default function FilesSection() {
         collapsed={filesCollapsed}
         onToggle={() => setFilesCollapsed((c) => !c)}
         actions={
-          <ViewModeButton
-            mode={filesView}
-            onToggle={() => setFilesView((m) => (m === "detailed" ? "compact" : "detailed"))}
-          />
+          <>
+            <ShowAllFilesButton active={showAllFiles} onToggle={() => void toggleShowAllFiles()} />
+            <ViewModeButton
+              mode={filesView}
+              onToggle={() => setFilesView((m) => (m === "detailed" ? "compact" : "detailed"))}
+            />
+          </>
         }
       >
         {selectedRev &&
@@ -64,7 +71,9 @@ export default function FilesSection() {
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-1.5 px-3 pb-3">
             {files.length === 0 && (
-              <p className="text-xs text-muted-foreground">{isCurrent ? "No changes." : "No files."}</p>
+              <p className="text-xs text-muted-foreground">
+                {showAllFiles ? "No files." : "No changes."}
+              </p>
             )}
             {isCurrent
               ? files.map((file) => (
@@ -77,33 +86,16 @@ export default function FilesSection() {
                     onToggleStage={() => toggleStaged(file)}
                   />
                 ))
-              : files.map((file) =>
-                  filesView === "compact" ? (
-                    <ListRow
-                      key={file.path}
-                      compact
-                      active={selectedFile?.path === file.path}
-                      onClick={() => pickFile(file)}
-                    >
-                      <span className="min-w-0 flex-1 truncate text-[13px]">{file.path}</span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {formatBytes(file.size)}
-                      </span>
-                    </ListRow>
-                  ) : (
-                    <ListRow
-                      key={file.path}
-                      active={selectedFile?.path === file.path}
-                      onClick={() => pickFile(file)}
-                    >
-                      <span className="text-[13px] break-all">{file.path}</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {formatBytes(file.size)}
-                        {file.is_binary ? " · binary" : ""}
-                      </span>
-                    </ListRow>
-                  ),
-                )}
+              : files.map((file) => (
+                  <CommittedFileRow
+                    key={file.path}
+                    file={file}
+                    compact={filesView === "compact"}
+                    highlight={showAllFiles}
+                    active={selectedFile?.path === file.path}
+                    onOpen={() => pickFile(file)}
+                  />
+                ))}
           </div>
         </ScrollArea>
       )}

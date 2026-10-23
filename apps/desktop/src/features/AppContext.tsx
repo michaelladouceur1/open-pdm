@@ -69,6 +69,10 @@ export interface AppContextValue {
   filesHeightPct: number;
   filesView: ViewMode;
   setFilesView: Dispatch<SetStateAction<ViewMode>>;
+  /** Whether the Files section lists every project file, not just changes. */
+  showAllFiles: boolean;
+  /** Flip {@link showAllFiles} and reload the open revision's files. */
+  toggleShowAllFiles: () => Promise<void>;
   revisionsView: ViewMode;
   setRevisionsView: Dispatch<SetStateAction<ViewMode>>;
   leftColumnRef: RefObject<HTMLDivElement | null>;
@@ -137,6 +141,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [revisionsCollapsed, setRevisionsCollapsed] = useState(() => getStored("revisionsCollapsed", false));
   const [filesHeightPct, setFilesHeightPct] = useState(() => getStored("filesHeightPct", SECTION_DEFAULT_HEIGHT_PCT));
   const [filesView, setFilesView] = useState<ViewMode>(() => getStored("filesView", "detailed"));
+  const [showAllFiles, setShowAllFiles] = useState(() => getStored("filesShowAll", false));
   const [revisionsView, setRevisionsView] = useState<ViewMode>(() => getStored("revisionsView", "detailed"));
   const leftColumnRef = useRef<HTMLDivElement>(null);
   // Monotonic id for the in-flight preview request, so a slow tessellation of a
@@ -164,7 +169,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const rev = revs[0]?.oid ?? null;
       setSelectedRev(rev);
       setChangeCount((await getFiles(path, CURRENT_REV)).length);
-      setFiles(await getFiles(path, rev));
+      setFiles(await getFiles(path, rev, showAllFiles));
       setSelectedFile(null);
       setMetadata(null);
       setMesh(null);
@@ -212,8 +217,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await loadPath(selected);
   }
 
-  async function loadFiles(path: string, rev: string | null) {
-    setFiles(await getFiles(path, rev));
+  async function loadFiles(path: string, rev: string | null, showAll: boolean) {
+    setFiles(await getFiles(path, rev, showAll));
     setSelectedFile(null);
     setMetadata(null);
     setMesh(null);
@@ -225,7 +230,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedRev(oid);
     setError(null);
     try {
-      await loadFiles(projectPath, oid);
+      await loadFiles(projectPath, oid, showAllFiles);
     } catch (e) {
       setError(String(e));
     }
@@ -236,7 +241,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   async function refreshWorking() {
     const changes = await getFiles(projectPath, CURRENT_REV);
     setChangeCount(changes.length);
-    if (selectedRev === CURRENT_REV) setFiles(changes);
+    if (selectedRev === CURRENT_REV) {
+      setFiles(await getFiles(projectPath, CURRENT_REV, showAllFiles));
+    }
+  }
+
+  // Flip the Files section between changes-only and every project file,
+  // re-reading the open revision so the list reflects the new scope.
+  async function toggleShowAllFiles() {
+    const next = !showAllFiles;
+    setShowAllFiles(next);
+    if (!selectedRev) return;
+    setError(null);
+    try {
+      await loadFiles(projectPath, selectedRev, next);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   // Add or remove a file from the open "Current" revision.
@@ -358,6 +379,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [filesView]);
 
   useEffect(() => {
+    setStored("filesShowAll", showAllFiles);
+  }, [showAllFiles]);
+
+  useEffect(() => {
     setStored("revisionsView", revisionsView);
   }, [revisionsView]);
 
@@ -433,6 +458,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     filesHeightPct,
     filesView,
     setFilesView,
+    showAllFiles,
+    toggleShowAllFiles,
     revisionsView,
     setRevisionsView,
     leftColumnRef,

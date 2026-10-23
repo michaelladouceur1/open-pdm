@@ -18,6 +18,8 @@ export type StoreValues = {
   revisionsCollapsed: boolean;
   /** Row density for the Files section. */
   filesView: "detailed" | "compact";
+  /** Whether the Files section lists every project file, not just changes. */
+  filesShowAll: boolean;
   /** Row density for the Revisions section. */
   revisionsView: "detailed" | "compact";
   /** Path of the most recently opened project, reopened on the next launch. */
@@ -34,6 +36,7 @@ const STORAGE_KEYS: Record<StoreKey, string> = {
   filesCollapsed: "openpdm-files-collapsed",
   revisionsCollapsed: "openpdm-revisions-collapsed",
   filesView: "openpdm-files-view",
+  filesShowAll: "openpdm-files-show-all",
   revisionsView: "openpdm-revisions-view",
   lastProjectPath: "openpdm-last-project-path",
 };
