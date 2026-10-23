@@ -164,9 +164,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [filesCollapsed, setFilesCollapsed] = useState(() => getStored("filesCollapsed", false));
   const [revisionsCollapsed, setRevisionsCollapsed] = useState(() => getStored("revisionsCollapsed", false));
   const [filesHeightPct, setFilesHeightPct] = useState(() => getStored("filesHeightPct", SECTION_DEFAULT_HEIGHT_PCT));
-  const [filesView, setFilesView] = useState<ViewMode>(() => getStored("filesView", "detailed"));
-  const [showAllFiles, setShowAllFiles] = useState(() => getStored("filesShowAll", false));
-  const [revisionsView, setRevisionsView] = useState<ViewMode>(() => getStored("revisionsView", "detailed"));
+  const [filesView, setFilesView] = useState<ViewMode>(() => getStored("filesView", "compact"));
+  const [showAllFiles, setShowAllFiles] = useState(() => getStored("filesShowAll", true));
+  const [revisionsView, setRevisionsView] = useState<ViewMode>(() => getStored("revisionsView", "compact"));
   const leftColumnRef = useRef<HTMLDivElement>(null);
   // Monotonic id for the in-flight preview request, so a slow tessellation of a
   // previously selected file can never overwrite a newer selection.
