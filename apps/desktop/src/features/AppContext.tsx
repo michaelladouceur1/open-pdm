@@ -190,11 +190,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setStored("lastProjectPath", path);
       const revs = await getRevisions(path, 50);
       setRevisions(revs);
-      const rev = revs[0]?.oid ?? null;
-      setSelectedRev(rev);
+      // Lead with the open "Current" revision so the working tree is what the
+      // user sees first, and open its first file in the detail panel.
+      setSelectedRev(CURRENT_REV);
       setChangeCount((await getFiles(path, CURRENT_REV)).length);
-      setFiles(await getFiles(path, rev, showAllFiles));
+      const nextFiles = await getFiles(path, CURRENT_REV, showAllFiles);
+      setFiles(nextFiles);
       clearFilePreview();
+      // Select the first file immediately; its preview loads in the background
+      // so it does not hold up the project-open busy state.
+      if (nextFiles[0]) void pickFileAt(path, nextFiles[0], CURRENT_REV);
     } catch (e) {
       setError(String(e));
       setInfo(null);
@@ -251,15 +256,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   async function loadFiles(path: string, rev: string | null, showAll: boolean) {
-    setFiles(await getFiles(path, rev, showAll));
+    const next = await getFiles(path, rev, showAll);
+    setFiles(next);
     clearFilePreview();
+    return next;
   }
 
   async function pickRevision(oid: string) {
     setSelectedRev(oid);
     setError(null);
     try {
-      await loadFiles(projectPath, oid, showAllFiles);
+      const next = await loadFiles(projectPath, oid, showAllFiles);
+      // Switching revisions should also open that revision's first file, so the
+      // detail panel never sits empty after the switch.
+      if (next[0]) await pickFileAt(projectPath, next[0], oid);
     } catch (e) {
       setError(String(e));
     }
@@ -333,13 +343,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Load the metadata and preview mesh for one version of a file. `requestId`
   // is the caller's slot in the preview request sequence, so a slow response
   // for a file/version the user has since left is discarded.
-  async function loadPreview(file: FileEntry, rev: string | null, requestId: number) {
+  async function loadPreview(path: string, file: FileEntry, rev: string | null, requestId: number) {
     setMetadata(null);
     setMesh(null);
     setError(null);
     setPreviewLoading(true);
     try {
-      const nextMetadata = await getMetadata(projectPath, file.path, rev);
+      const nextMetadata = await getMetadata(path, file.path, rev);
       if (requestId !== previewRequestRef.current) return;
       setMetadata(nextMetadata);
 
@@ -350,11 +360,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // only when needed.
       let nextMesh: Mesh | null;
       if (nextMetadata.attributes.tessellation) {
-        const payloads = await getShapePayloads(projectPath, file.path, rev);
+        const payloads = await getShapePayloads(path, file.path, rev);
         const { tessellateShapes } = await import("@/lib/occt");
         nextMesh = await tessellateShapes(payloads);
       } else {
-        nextMesh = await getMesh(projectPath, file.path, rev);
+        nextMesh = await getMesh(path, file.path, rev);
       }
 
       if (requestId !== previewRequestRef.current) return;
@@ -367,23 +377,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // Select a file: load its committed version history and preview the version
-  // matching the open revision (the working tree for "Current", or the commit
-  // being browsed).
-  async function pickFile(file: FileEntry) {
+  // Select a file from an explicit project and revision: load its committed
+  // version history and preview `rev` (the working tree for "Current", or the
+  // commit being browsed). The path is explicit so this can run while a newly
+  // opened project is still propagating into state.
+  async function pickFileAt(path: string, file: FileEntry, rev: string | null) {
     const requestId = (previewRequestRef.current += 1);
     setSelectedFile(file);
     setFileRevisions(null);
-    setPreviewRev(selectedRev);
+    setPreviewRev(rev);
     setMetadata(null);
     setMesh(null);
     setError(null);
     setPreviewLoading(true);
     try {
-      const revs = await getFileRevisions(projectPath, file.path);
+      const revs = await getFileRevisions(path, file.path);
       if (requestId !== previewRequestRef.current) return;
       setFileRevisions(revs);
-      await loadPreview(file, selectedRev, requestId);
+      await loadPreview(path, file, rev, requestId);
     } catch (e) {
       if (requestId !== previewRequestRef.current) return;
       setFileRevisions([]);
@@ -392,13 +403,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Select a file in the open project, previewing its version at the open
+  // revision.
+  async function pickFile(file: FileEntry) {
+    await pickFileAt(projectPath, file, selectedRev);
+  }
+
   // Preview a different committed version of the selected file.
   async function pickFileRev(oid: string) {
     const file = selectedFile;
     if (!file) return;
     setPreviewRev(oid);
     const requestId = (previewRequestRef.current += 1);
-    await loadPreview(file, oid, requestId);
+    await loadPreview(projectPath, file, oid, requestId);
   }
 
   // Restore the selected file from `oid` into the working tree. Only that file
@@ -415,7 +432,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // The working tree now matches `oid`; show the restored content.
       setPreviewRev(oid);
       const requestId = (previewRequestRef.current += 1);
-      await loadPreview(file, oid, requestId);
+      await loadPreview(projectPath, file, oid, requestId);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -450,7 +467,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setFileRevisions(await getFileRevisions(projectPath, file.path));
         setPreviewRev(CURRENT_REV);
         const requestId = (previewRequestRef.current += 1);
-        await loadPreview(file, CURRENT_REV, requestId);
+        await loadPreview(projectPath, file, CURRENT_REV, requestId);
       }
     } catch (e) {
       setError(String(e));
