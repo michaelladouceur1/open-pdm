@@ -66,6 +66,8 @@ export interface AppContextValue {
   /** True while a version is being deleted from history. */
   deletingRev: boolean;
   stats: IndexStats | null;
+  /** True while a project index is being built. */
+  indexing: boolean;
   error: string | null;
   busy: boolean;
   previewLoading: boolean;
@@ -150,6 +152,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [checkingOut, setCheckingOut] = useState(false);
   const [deletingRev, setDeletingRev] = useState(false);
   const [stats, setStats] = useState<IndexStats | null>(null);
+  const [indexing, setIndexing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // True while a file's preview is being produced (e.g. B-rep tessellation).
@@ -458,12 +461,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   async function buildIndex() {
     setError(null);
+    setIndexing(true);
     setBusy(true);
     try {
       setStats(await indexProject(projectPath, 200));
     } catch (e) {
       setError(String(e));
     } finally {
+      setIndexing(false);
       setBusy(false);
     }
   }
@@ -571,6 +576,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     checkingOut,
     deletingRev,
     stats,
+    indexing,
     error,
     busy,
     previewLoading,

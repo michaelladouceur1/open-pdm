@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,19 +19,10 @@ const STACK_THRESHOLD = REVISIONS_WIDTH + SECTIONS_GAP + METADATA_MIN_WIDTH;
 
 type DetailSection = "revisions" | "metadata";
 
-function StatRow({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between border-b py-1 text-[13px] last:border-0">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
-    </div>
-  );
-}
-
 // Right-hand panel: the selected file's name, its committed versions and
-// metadata side by side, and a 3D preview, plus the project index statistics
-// once an index has been built. When the panel is too narrow for both sections
-// the Revisions and Metadata views share a single tabbed area instead.
+// metadata side by side, and a 3D preview. When the panel is too narrow for
+// both sections the Revisions and Metadata views share a single tabbed area
+// instead.
 export default function DetailPanel() {
   const {
     selectedFile,
@@ -39,7 +30,6 @@ export default function DetailPanel() {
     mesh,
     theme,
     previewLoading,
-    stats,
     fileRevisions,
     previewRev,
     checkingOut,
@@ -200,22 +190,6 @@ export default function DetailPanel() {
           <h2 className="text-sm font-medium">Detail</h2>
           <p className="text-sm text-muted-foreground">Select a file to inspect its metadata and preview.</p>
         </div>
-      )}
-
-      {stats && (
-        <Card size="sm">
-          <CardHeader>
-            <CardTitle>Index</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col">
-            <StatRow label="Revisions" value={stats.revisions} />
-            <StatRow label="File revisions" value={stats.file_revisions} />
-            <StatRow label="Unique blobs" value={stats.unique_blobs} />
-            <StatRow label="Unique bytes" value={formatBytes(stats.unique_bytes)} />
-            <StatRow label="Referenced" value={formatBytes(stats.referenced_bytes)} />
-            <StatRow label="Dedup saved" value={formatBytes(stats.dedup_saved_bytes)} />
-          </CardContent>
-        </Card>
       )}
     </section>
   );
