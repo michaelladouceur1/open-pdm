@@ -2,9 +2,10 @@ import { Fragment, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, revisionLabel } from "@/lib/format";
 import Viewer from "@/lib/Viewer";
 import { useApp } from "./AppContext";
+import FileRevisionRow from "./components/FileRevisionRow";
 
 function StatRow({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -15,10 +16,23 @@ function StatRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-// Right-hand panel: the selected file's name, metadata and 3D preview, plus the
-// project index statistics once an index has been built.
+// Right-hand panel: the selected file's name, its committed versions and
+// metadata side by side, and a 3D preview, plus the project index statistics
+// once an index has been built.
 export default function DetailPanel() {
-  const { selectedFile, metadata, mesh, theme, previewLoading, stats } = useApp();
+  const {
+    selectedFile,
+    metadata,
+    mesh,
+    theme,
+    previewLoading,
+    stats,
+    fileRevisions,
+    previewRev,
+    checkingOut,
+    pickFileRev,
+    checkoutFile,
+  } = useApp();
 
   // Formats the core can't parse itself (e.g. SolidWorks) advertise
   // `preview = unavailable` when no external converter is configured; explain
@@ -40,25 +54,65 @@ export default function DetailPanel() {
             </div>
           </div>
 
-          {metadata && (
+          {/* Two split sections: the file's version history on the left, its
+              metadata on the right. */}
+          <div className="grid grid-cols-2 gap-3">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>Revisions</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[40vh] overflow-y-auto">
+                {fileRevisions === null ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Spinner className="size-3.5" />
+                    Loading revisions…
+                  </div>
+                ) : fileRevisions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No committed revisions for this file yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {fileRevisions.map((revision, index) => (
+                      <FileRevisionRow
+                        key={revision.oid}
+                        revision={revision}
+                        label={revisionLabel(fileRevisions.length - 1 - index)}
+                        active={revision.oid === previewRev}
+                        checkingOut={checkingOut}
+                        onPreview={() => void pickFileRev(revision.oid)}
+                        onCheckout={() => void checkoutFile(revision.oid)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card size="sm">
               <CardHeader>
                 <CardTitle>Metadata</CardTitle>
               </CardHeader>
               <CardContent className="max-h-[40vh] overflow-y-auto">
-                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-                  <dt className="text-muted-foreground">Handler</dt>
-                  <dd>{metadata.format}</dd>
-                  {Object.entries(metadata.attributes).map(([key, value]) => (
-                    <Fragment key={key}>
-                      <dt className="text-muted-foreground">{key}</dt>
-                      <dd className="font-mono text-xs break-all">{value}</dd>
-                    </Fragment>
-                  ))}
-                </dl>
+                {metadata ? (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+                    <dt className="text-muted-foreground">Handler</dt>
+                    <dd>{metadata.format}</dd>
+                    {Object.entries(metadata.attributes).map(([key, value]) => (
+                      <Fragment key={key}>
+                        <dt className="text-muted-foreground">{key}</dt>
+                        <dd className="font-mono text-xs break-all">{value}</dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {previewLoading ? "Loading metadata…" : "No metadata available."}
+                  </p>
+                )}
               </CardContent>
             </Card>
-          )}
+          </div>
 
           <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-lg border bg-muted">
             {mesh && mesh.indices.length > 0 ? (

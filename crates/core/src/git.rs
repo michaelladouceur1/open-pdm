@@ -352,6 +352,46 @@ impl Project {
         Ok(files)
     }
 
+    /// Commits that changed `path`, newest first, up to `limit`.
+    ///
+    /// Walks history from HEAD and keeps the commits whose diff against their
+    /// first parent touches `path`. Backs the per-file Revisions list in the
+    /// detail panel, where each entry is a committed version of the part. A
+    /// file that no commit has touched yet (e.g. a new, untracked file) has an
+    /// empty history rather than an error.
+    pub fn file_revisions(&self, path: &str, limit: usize) -> Result<Vec<Revision>> {
+        if self.repo.head().is_err() {
+            return Ok(Vec::new());
+        }
+        let mut walk = self.repo.revwalk()?;
+        walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+        walk.push_head()?;
+
+        // Restrict every commit's diff to the path we care about.
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(path);
+
+        let mut out = Vec::new();
+        for oid in walk {
+            if out.len() >= limit {
+                break;
+            }
+            let commit = self.repo.find_commit(oid?)?;
+            let tree = commit.tree()?;
+            let parent_tree = match commit.parent(0) {
+                Ok(parent) => Some(parent.tree()?),
+                Err(_) => None,
+            };
+            let diff = self
+                .repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+            if diff.deltas().len() > 0 {
+                out.push(revision_from_commit(&commit));
+            }
+        }
+        Ok(out)
+    }
+
     /// Size, binary flag and content id for `path` in a committed tree. Empty
     /// when the path is absent (e.g. a file the commit deleted).
     fn tree_blob_info(&self, tree: &git2::Tree<'_>, path: &str) -> (String, u64, bool) {
@@ -438,6 +478,48 @@ impl Project {
         )?;
         let commit = self.repo.find_commit(oid)?;
         Ok(revision_from_commit(&commit))
+    }
+
+    /// Restore `path` from `rev` into the working tree and index.
+    ///
+    /// The equivalent of `git checkout <rev> -- <path>`: only `path` is
+    /// touched, so a previous version of a single part can be brought back
+    /// without moving HEAD. The restored content is staged, so it shows up as a
+    /// change in the open "Current" revision.
+    pub fn checkout_file(&self, rev: &str, path: &str) -> Result<()> {
+        if self.repo.is_bare() {
+            return Err(Error::NoWorktree(
+                "cannot check out files into a bare repository".into(),
+            ));
+        }
+        let rel = Path::new(path);
+        // Keep the write inside the repository root.
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::UnknownRevision(path.to_string()));
+        }
+
+        let commit = self.repo.revparse_single(rev)?.peel_to_commit()?;
+        let tree = commit.tree()?;
+        let entry = tree
+            .get_path(rel)
+            .map_err(|_| Error::UnknownRevision(format!("{path} @ {rev}")))?;
+        let blob = self.repo.find_blob(entry.id())?;
+
+        let dest = self.root.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dest, blob.content())?;
+
+        // Stage the restored content so the index matches the working tree.
+        let mut index = self.repo.index()?;
+        index.add_path(rel)?;
+        index.write()?;
+        Ok(())
     }
 
     /// Size, binary flag and content id for a working file, preferring the
@@ -786,5 +868,51 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "part.stl");
         assert_eq!(project.blob(None, "part.stl").unwrap(), b"solid x");
+    }
+
+    #[test]
+    fn lists_a_files_revisions_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "add a");
+        commit_file(&repo, "b.txt", b"two", "add b");
+        commit_file(&repo, "a.txt", b"one changed", "update a");
+
+        let project = Project::open(dir.path()).unwrap();
+        let revs = project.file_revisions("a.txt", 10).unwrap();
+        assert_eq!(revs.len(), 2);
+        assert_eq!(revs[0].summary, "update a");
+        assert_eq!(revs[1].summary, "add a");
+
+        // The limit is respected.
+        assert_eq!(project.file_revisions("a.txt", 1).unwrap().len(), 1);
+        // A file no commit touched has no history rather than an error.
+        assert!(project.file_revisions("missing.txt", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn checks_out_a_single_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "add a");
+        let first = Project::open(dir.path()).unwrap().head_revision().unwrap();
+        commit_file(&repo, "b.txt", b"two", "add b");
+        commit_file(&repo, "a.txt", b"one changed", "update a");
+
+        let project = Project::open(dir.path()).unwrap();
+        project.checkout_file(&first.oid, "a.txt").unwrap();
+
+        // The working file is restored to the first revision's content ...
+        assert_eq!(project.blob(Some(WORKTREE), "a.txt").unwrap(), b"one");
+        // ... and only that file: b.txt is untouched.
+        assert_eq!(project.blob(Some(WORKTREE), "b.txt").unwrap(), b"two");
+        // The restored content is staged as a change in the Current revision.
+        let changes = project.working_files().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "a.txt");
+        assert_eq!(changes[0].staged, Some(true));
+
+        // Checking out a path absent from the revision is an error.
+        assert!(project.checkout_file(&first.oid, "missing.txt").is_err());
     }
 }

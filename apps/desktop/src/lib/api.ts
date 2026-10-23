@@ -72,6 +72,14 @@ export const createProject = (path: string) =>
 export const getRevisions = (path: string, limit: number) =>
   invoke<Revision[]>("revisions", { path, limit });
 
+/** Commits that changed a single file, newest first. */
+export const getFileRevisions = (path: string, file: string, limit = 100) =>
+  invoke<Revision[]>("file_revisions", { path, file, limit });
+
+/** Restore a single file from a revision into the working tree. */
+export const checkoutFile = (path: string, file: string, rev: string) =>
+  invoke<void>("checkout_file", { path, file, rev });
+
 export const getFiles = (path: string, rev: string | null, all = false) =>
   invoke<FileEntry[]>("files", { path, rev, all });
 

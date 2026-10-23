@@ -18,6 +18,9 @@ pub enum Error {
     #[error("revision not found: {0}")]
     UnknownRevision(String),
 
+    #[error("operation requires a working tree: {0}")]
+    NoWorktree(String),
+
     #[error("no handler registered for: {0}")]
     Unsupported(String),
 
