@@ -43,8 +43,10 @@ export default function DetailPanel() {
     fileRevisions,
     previewRev,
     checkingOut,
+    deletingRev,
     pickFileRev,
     checkoutFile,
+    deleteFileRevision,
   } = useApp();
 
   const sectionRef = useRef<HTMLElement>(null);
@@ -94,8 +96,10 @@ export default function DetailPanel() {
                 label={revisionLabel(fileRevisions.length - 1 - index)}
                 active={revision.oid === previewRev}
                 checkingOut={checkingOut}
+                deleting={deletingRev}
                 onPreview={() => void pickFileRev(revision.oid)}
                 onCheckout={() => void checkoutFile(revision.oid)}
+                onDelete={() => void deleteFileRevision(revision.oid)}
               />
             ))}
           </div>

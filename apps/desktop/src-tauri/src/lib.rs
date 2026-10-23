@@ -137,6 +137,19 @@ fn checkout_file(path: String, file: String, rev: String) -> Result<(), String> 
     open(&path)?.checkout_file(&rev, &file).map_err(to_err)
 }
 
+/// Remove a single file's version from history.
+///
+/// Backs the detail panel's per-revision "delete" action. Rewrites the commit
+/// so it no longer changes `file` and rewrites the commits after it, so only
+/// that version disappears; every other file is untouched. Commit oids change,
+/// so the UI must refresh its history afterwards.
+#[tauri::command]
+fn delete_file_revision(path: String, file: String, rev: String) -> Result<(), String> {
+    open(&path)?
+        .delete_file_revision(&rev, &file)
+        .map_err(to_err)
+}
+
 #[tauri::command]
 fn metadata(path: String, file: String, rev: Option<String>) -> Result<FileMetadata, String> {
     let project = open(&path)?;
@@ -215,6 +228,7 @@ pub fn run() {
             unstage_file,
             commit,
             checkout_file,
+            delete_file_revision,
             metadata,
             mesh,
             shape_payloads,

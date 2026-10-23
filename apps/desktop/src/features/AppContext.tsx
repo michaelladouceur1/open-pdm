@@ -17,6 +17,7 @@ import {
   checkoutFile as checkoutFileAt,
   commitStaged,
   createProject,
+  deleteFileRevision as deleteFileRevisionAt,
   getFileRevisions,
   getFiles,
   getMesh,
@@ -62,6 +63,8 @@ export interface AppContextValue {
   previewRev: string | null;
   /** True while a previous version is being checked out into the working tree. */
   checkingOut: boolean;
+  /** True while a version is being deleted from history. */
+  deletingRev: boolean;
   stats: IndexStats | null;
   error: string | null;
   busy: boolean;
@@ -98,6 +101,8 @@ export interface AppContextValue {
   pickFileRev: (oid: string) => Promise<void>;
   /** Restore the selected file from a revision into the working tree. */
   checkoutFile: (oid: string) => Promise<void>;
+  /** Delete the selected file's version at a revision from history. */
+  deleteFileRevision: (oid: string) => Promise<void>;
   toggleStaged: (file: FileEntry) => Promise<void>;
 
   // Commit composer for the open "Current" revision.
@@ -143,6 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [fileRevisions, setFileRevisions] = useState<Revision[] | null>(null);
   const [previewRev, setPreviewRev] = useState<string | null>(null);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [deletingRev, setDeletingRev] = useState(false);
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -414,6 +420,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Delete the selected file's version at `oid` from history. The core rewrites
+  // the commit chain, so the oids change: refresh the revision list, return to
+  // the working tree, and rebuild the file's version history.
+  async function deleteFileRevision(oid: string) {
+    const file = selectedFile;
+    if (!file) return;
+    setError(null);
+    setDeletingRev(true);
+    try {
+      await deleteFileRevisionAt(projectPath, file.path, oid);
+      setRevisions(await getRevisions(projectPath, 50));
+      setSelectedRev(CURRENT_REV);
+
+      // One read of the whole working tree: the changed subset feeds the Files
+      // panel, and it tells us whether the file still exists at all.
+      const worktree = await getFiles(projectPath, CURRENT_REV, true);
+      const changes = worktree.filter((f) => f.status != null || f.staged != null);
+      setChangeCount(changes.length);
+      setFiles(showAllFiles ? worktree : changes);
+
+      if (!worktree.some((f) => f.path === file.path)) {
+        // Deleting the file's only/earliest version removed it entirely.
+        clearFilePreview();
+      } else {
+        setFileRevisions(await getFileRevisions(projectPath, file.path));
+        setPreviewRev(CURRENT_REV);
+        const requestId = (previewRequestRef.current += 1);
+        await loadPreview(file, CURRENT_REV, requestId);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDeletingRev(false);
+    }
+  }
+
   async function buildIndex() {
     setError(null);
     setBusy(true);
@@ -527,6 +569,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fileRevisions,
     previewRev,
     checkingOut,
+    deletingRev,
     stats,
     error,
     busy,
@@ -553,6 +596,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pickFile,
     pickFileRev,
     checkoutFile,
+    deleteFileRevision,
     toggleStaged,
     commitMessage,
     setCommitMessage,

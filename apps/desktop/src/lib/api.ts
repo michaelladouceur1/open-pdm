@@ -80,6 +80,10 @@ export const getFileRevisions = (path: string, file: string, limit = 100) =>
 export const checkoutFile = (path: string, file: string, rev: string) =>
   invoke<void>("checkout_file", { path, file, rev });
 
+/** Remove a single file's version from history (rewrites the commit chain). */
+export const deleteFileRevision = (path: string, file: string, rev: string) =>
+  invoke<void>("delete_file_revision", { path, file, rev });
+
 export const getFiles = (path: string, rev: string | null, all = false) =>
   invoke<FileEntry[]>("files", { path, rev, all });
 

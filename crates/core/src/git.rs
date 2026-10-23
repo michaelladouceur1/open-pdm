@@ -522,6 +522,136 @@ impl Project {
         Ok(())
     }
 
+    /// Remove a single file's version from history.
+    ///
+    /// Rewrites the target commit so it no longer changes `path` (reverting the
+    /// file to its state in the commit's first parent), then rewrites the
+    /// commits that follow on the current branch so the file's later versions
+    /// are preserved. Only `path` is touched: every other file in the rewritten
+    /// commits keeps its original contents. The working tree and index are then
+    /// synced to the rewritten tip for `path`, so the repository is left clean.
+    ///
+    /// Because rewriting changes the oids of the target commit and everything
+    /// after it, callers must refresh their revision and file lists afterwards.
+    pub fn delete_file_revision(&self, rev: &str, path: &str) -> Result<()> {
+        let rel = Path::new(path);
+        // Keep every read/write inside the repository root.
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::UnknownRevision(path.to_string()));
+        }
+        if self.repo.head().is_err() {
+            return Err(Error::UnknownRevision("HEAD (unborn)".into()));
+        }
+
+        let target = self.repo.revparse_single(rev)?.peel_to_commit()?;
+        let head = self.repo.head()?.peel_to_commit()?;
+
+        // Walk every commit reachable from HEAD, oldest first, so a parent's
+        // rewritten oid is known before its children are processed.
+        let mut walk = self.repo.revwalk()?;
+        walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
+        walk.push_head()?;
+
+        // old oid -> rewritten oid (identity for commits before the target).
+        let mut map: HashMap<git2::Oid, git2::Oid> = HashMap::new();
+        // old oid -> whether the commit is the target or descends from it.
+        let mut affected: HashMap<git2::Oid, bool> = HashMap::new();
+
+        for oid in walk {
+            let oid = oid?;
+            let commit = self.repo.find_commit(oid)?;
+            let is_affected = oid == target.id()
+                || commit
+                    .parent_ids()
+                    .any(|pid| affected.get(&pid).copied().unwrap_or(false));
+
+            if !is_affected {
+                map.insert(oid, oid);
+                affected.insert(oid, false);
+                continue;
+            }
+
+            let tree = commit.tree()?;
+            let original_value = self.tree_entry_value(&tree, rel)?;
+            // The value the first parent will have after rewriting (if any).
+            let parent_value = match commit.parent_ids().next() {
+                Some(pid) => {
+                    let new_pid = map.get(&pid).copied().unwrap_or(pid);
+                    self.path_entry_in_commit(new_pid, rel)?
+                }
+                None => None,
+            };
+
+            // The target reverts the file; a descendant that changed the path
+            // keeps its own version; anything else carries the parent forward.
+            let new_value = if oid == target.id() || !self.commit_changes_path(&commit, rel)? {
+                parent_value
+            } else {
+                original_value
+            };
+
+            // Reuse the original tree when the path is unchanged so only the
+            // parent link (and therefore the commit oid) moves.
+            let new_tree_id = if new_value == original_value {
+                commit.tree_id()
+            } else {
+                self.tree_with_path(&tree, rel, new_value)?
+            };
+            let new_tree = self.repo.find_tree(new_tree_id)?;
+
+            let new_parents: Vec<git2::Commit> = commit
+                .parent_ids()
+                .map(|pid| {
+                    let new_pid = map.get(&pid).copied().unwrap_or(pid);
+                    self.repo.find_commit(new_pid)
+                })
+                .collect::<std::result::Result<_, _>>()?;
+            let parent_refs: Vec<&git2::Commit> = new_parents.iter().collect();
+
+            let new_oid = self.repo.commit(
+                None,
+                &commit.author(),
+                &commit.committer(),
+                commit.message().unwrap_or(""),
+                &new_tree,
+                &parent_refs,
+            )?;
+            map.insert(oid, new_oid);
+            affected.insert(oid, true);
+        }
+
+        let new_head = map.get(&head.id()).copied().unwrap_or(head.id());
+        if new_head == head.id() {
+            // The target is not on the current branch, so nothing was rewritten.
+            return Err(Error::UnknownRevision(format!("{path} @ {rev}")));
+        }
+
+        // Move the checked-out branch (or detached HEAD) to the rewritten tip.
+        let branch = self.repo.head().ok().and_then(|h| {
+            if h.is_branch() {
+                h.name().map(str::to_string)
+            } else {
+                None
+            }
+        });
+        match branch {
+            Some(name) => {
+                self.repo
+                    .reference(&name, new_head, true, "openpdm: delete file revision")?;
+            }
+            None => self.repo.set_head_detached(new_head)?,
+        }
+
+        // Sync `path` in the working tree and index to the rewritten tip so the
+        // deletion does not leave a phantom change behind.
+        self.sync_worktree_path(path)?;
+        Ok(())
+    }
+
     /// Size, binary flag and content id for a working file, preferring the
     /// on-disk contents and falling back to the staged index entry (for, say, a
     /// staged then deleted file).
@@ -550,6 +680,116 @@ impl Project {
             Some(r) => Ok(self.repo.revparse_single(r)?.peel_to_tree()?),
             None => Ok(self.repo.head()?.peel_to_tree()?),
         }
+    }
+
+    /// The blob oid and file mode of `path` in `tree`, if present.
+    fn tree_entry_value(
+        &self,
+        tree: &git2::Tree<'_>,
+        path: &Path,
+    ) -> Result<Option<(git2::Oid, i32)>> {
+        match tree.get_path(path) {
+            Ok(entry) => Ok(Some((entry.id(), entry.filemode()))),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// The blob oid and file mode of `path` in a commit's tree, if present.
+    fn path_entry_in_commit(
+        &self,
+        commit_oid: git2::Oid,
+        path: &Path,
+    ) -> Result<Option<(git2::Oid, i32)>> {
+        let commit = self.repo.find_commit(commit_oid)?;
+        self.tree_entry_value(&commit.tree()?, path)
+    }
+
+    /// Whether `commit` changed `path` relative to its first parent.
+    fn commit_changes_path(&self, commit: &git2::Commit<'_>, path: &Path) -> Result<bool> {
+        let tree = commit.tree()?;
+        let parent_tree = match commit.parent(0) {
+            Ok(parent) => Some(parent.tree()?),
+            Err(_) => None,
+        };
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(path);
+        let diff = self
+            .repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+        Ok(diff.deltas().len() > 0)
+    }
+
+    /// A copy of `tree` with `path` set to `value` (or removed when `None`).
+    ///
+    /// Builds the new tree through an in-memory index so nested paths are
+    /// handled without walking the tree by hand.
+    fn tree_with_path(
+        &self,
+        tree: &git2::Tree<'_>,
+        path: &Path,
+        value: Option<(git2::Oid, i32)>,
+    ) -> Result<git2::Oid> {
+        let mut index = git2::Index::new()?;
+        index.read_tree(tree)?;
+        match value {
+            Some((oid, mode)) => {
+                let entry = git2::IndexEntry {
+                    ctime: git2::IndexTime::new(0, 0),
+                    mtime: git2::IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: mode as u32,
+                    uid: 0,
+                    gid: 0,
+                    file_size: 0,
+                    id: oid,
+                    flags: 0,
+                    flags_extended: 0,
+                    path: path.to_string_lossy().replace('\\', "/").into_bytes(),
+                };
+                index.add(&entry)?;
+            }
+            None => {
+                if index.get_path(path, 0).is_some() {
+                    index.remove_path(path)?;
+                }
+            }
+        }
+        Ok(index.write_tree_to(&self.repo)?)
+    }
+
+    /// Point the working tree and index at `path`'s content in HEAD.
+    fn sync_worktree_path(&self, path: &str) -> Result<()> {
+        if self.repo.is_bare() {
+            return Ok(());
+        }
+        let rel = Path::new(path);
+        let tree = self.repo.head()?.peel_to_tree()?;
+        match tree.get_path(rel) {
+            Ok(entry) => {
+                let blob = self.repo.find_blob(entry.id())?;
+                let dest = self.root.join(rel);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&dest, blob.content())?;
+                let mut index = self.repo.index()?;
+                index.add_path(rel)?;
+                index.write()?;
+            }
+            Err(_) => {
+                let dest = self.root.join(rel);
+                if dest.exists() {
+                    std::fs::remove_file(&dest)?;
+                }
+                let mut index = self.repo.index()?;
+                if index.get_path(rel, 0).is_some() {
+                    index.remove_path(rel)?;
+                    index.write()?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -914,5 +1154,76 @@ mod tests {
 
         // Checking out a path absent from the revision is an error.
         assert!(project.checkout_file(&first.oid, "missing.txt").is_err());
+    }
+
+    #[test]
+    fn deletes_a_files_revision_and_rewrites_descendants() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"v1", "add a");
+        commit_file(&repo, "b.txt", b"other", "add b");
+        commit_file(&repo, "a.txt", b"v2", "change a to v2");
+        commit_file(&repo, "a.txt", b"v3", "change a to v3");
+
+        let project = Project::open(dir.path()).unwrap();
+        let revs = project.file_revisions("a.txt", 10).unwrap();
+        assert_eq!(revs.len(), 3);
+        let v2 = revs[1].oid.clone();
+
+        project.delete_file_revision(&v2, "a.txt").unwrap();
+
+        // The v2 revision is gone; the add and the newest version survive.
+        let summaries: Vec<String> = project
+            .file_revisions("a.txt", 10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.summary)
+            .collect();
+        assert_eq!(summaries, vec!["change a to v3", "add a"]);
+
+        // The tip still holds v3, the unrelated file is untouched, and the
+        // working tree/index were synced so nothing looks changed.
+        assert_eq!(project.blob(None, "a.txt").unwrap(), b"v3");
+        assert_eq!(project.blob(None, "b.txt").unwrap(), b"other");
+        assert!(project.working_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_the_newest_revision_reverts_the_tip() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"v1", "add a");
+        commit_file(&repo, "a.txt", b"v2", "change a to v2");
+
+        let project = Project::open(dir.path()).unwrap();
+        let newest = project.file_revisions("a.txt", 10).unwrap()[0].oid.clone();
+        project.delete_file_revision(&newest, "a.txt").unwrap();
+
+        let revs = project.file_revisions("a.txt", 10).unwrap();
+        assert_eq!(revs.len(), 1);
+        assert_eq!(revs[0].summary, "add a");
+        // HEAD and the working tree now hold the older content.
+        assert_eq!(project.blob(None, "a.txt").unwrap(), b"v1");
+        assert_eq!(project.blob(Some(WORKTREE), "a.txt").unwrap(), b"v1");
+        assert!(project.working_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_the_add_revision_preserves_later_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"v1", "add a");
+        commit_file(&repo, "a.txt", b"v2", "change a to v2");
+
+        let project = Project::open(dir.path()).unwrap();
+        let add = project.file_revisions("a.txt", 10).unwrap()[1].oid.clone();
+        project.delete_file_revision(&add, "a.txt").unwrap();
+
+        // The add is gone; the later version is now the first appearance.
+        let revs = project.file_revisions("a.txt", 10).unwrap();
+        assert_eq!(revs.len(), 1);
+        assert_eq!(revs[0].summary, "change a to v2");
+        assert_eq!(project.blob(None, "a.txt").unwrap(), b"v2");
+        assert!(project.working_files().unwrap().is_empty());
     }
 }
