@@ -20,6 +20,14 @@ function StatRow({ label, value }: { label: string; value: ReactNode }) {
 export default function DetailPanel() {
   const { selectedFile, metadata, mesh, theme, previewLoading, stats } = useApp();
 
+  // Formats the core can't parse itself (e.g. SolidWorks) advertise
+  // `preview = unavailable` when no external converter is configured; explain
+  // how to enable the preview instead of the generic message.
+  const previewHint =
+    metadata?.attributes.preview === "unavailable"
+      ? `No preview available. Configure a converter in .openpdm/converters.json to preview ${metadata.format.toUpperCase()} files.`
+      : "No preview available for this format.";
+
   return (
     <section className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
       {selectedFile ? (
@@ -63,7 +71,7 @@ export default function DetailPanel() {
                     Building preview…
                   </>
                 ) : (
-                  "No preview available for this format."
+                  <span className="max-w-[85%] text-center">{previewHint}</span>
                 )}
               </div>
             )}

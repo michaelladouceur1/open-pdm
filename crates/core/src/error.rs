@@ -29,6 +29,9 @@ pub enum Error {
 
     #[error("failed to parse {format}: {message}")]
     Parse { format: String, message: String },
+
+    #[error("conversion failed: {0}")]
+    Conversion(String),
 }
 
 impl Error {

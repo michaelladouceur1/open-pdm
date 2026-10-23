@@ -9,12 +9,16 @@
 //! * File-format specific behaviour lives behind the [`handlers::CadHandler`]
 //!   trait. The core stays format-agnostic.
 
+pub mod convert;
 pub mod error;
 pub mod git;
 pub mod handlers;
 pub mod index;
 pub mod mesh;
 
+pub use convert::{
+    CachedConverter, CommandConverter, Converter, ConverterRegistry, NullConverter, TARGET_STL,
+};
 pub use error::{Error, Result};
 pub use git::{FileEntry, Project, Revision, WORKTREE};
 pub use handlers::{

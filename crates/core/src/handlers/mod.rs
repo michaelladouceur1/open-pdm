@@ -3,19 +3,23 @@
 //! The core is deliberately format-agnostic. Anything that needs to understand
 //! a specific file type (extract metadata, tessellate to a mesh, later: extract
 //! assemblies/BOM) is implemented behind [`CadHandler`] and registered in a
-//! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ) and FreeCAD
-//! documents (`.FCStd`); a future sidecar/JSON-RPC mechanism can add
-//! proprietary formats (e.g. SolidWorks) without touching the core.
+//! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ), FreeCAD
+//! documents (`.FCStd`), and a converter-backed handler for proprietary/native
+//! CAD formats the core cannot parse itself.
 
+pub mod converted;
 pub mod fcstd;
 pub mod generic;
 pub mod obj;
 pub mod stl;
 
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::convert::ConverterRegistry;
 use crate::{Mesh, Result};
 
 /// Format-agnostic metadata extracted from a file.
@@ -84,16 +88,32 @@ pub struct HandlerRegistry {
 }
 
 impl HandlerRegistry {
-    /// The default set of handlers: STL, OBJ, FreeCAD, and a catch-all fallback.
+    /// The default set of handlers: STL, OBJ, FreeCAD, the converter-backed
+    /// handler (metadata only until a converter is configured) and a catch-all
+    /// fallback.
     pub fn builtin() -> Self {
+        Self::with_converters(Arc::new(ConverterRegistry::empty()))
+    }
+
+    /// Like [`Self::builtin`], but with `converters` backing the
+    /// [`converted::ConvertibleHandler`] so proprietary formats can be
+    /// previewed through an external engine.
+    pub fn with_converters(converters: Arc<ConverterRegistry>) -> Self {
         Self {
             handlers: vec![
                 Box::new(stl::StlHandler),
                 Box::new(obj::ObjHandler),
                 Box::new(fcstd::FcstdHandler),
+                Box::new(converted::ConvertibleHandler::new(converters)),
                 Box::new(generic::GenericHandler),
             ],
         }
+    }
+
+    /// Registry for a project, loading its converters from
+    /// `<root>/.openpdm/converters.json` (see [`crate::convert`]).
+    pub fn for_project(root: &Path) -> Self {
+        Self::with_converters(Arc::new(ConverterRegistry::load(root)))
     }
 
     /// Find the handler for `path`, falling back to the generic handler.
@@ -193,7 +213,11 @@ mod tests {
         assert_eq!(reg.resolve("a.obj").name(), "obj");
         assert_eq!(reg.resolve("a.fcstd").name(), "fcstd");
         assert_eq!(reg.resolve("a.FCStd").name(), "fcstd");
-        assert_eq!(reg.resolve("a.sldprt").name(), "generic");
+        assert_eq!(reg.resolve("a.sldprt").name(), "converted");
+        assert_eq!(reg.resolve("a.SLDPRT").name(), "converted");
+        assert_eq!(reg.resolve("a.sldasm").name(), "converted");
+        assert_eq!(reg.resolve("a.catpart").name(), "converted");
+        assert_eq!(reg.resolve("a.step").name(), "converted");
         assert_eq!(reg.resolve("noext").name(), "generic");
     }
 

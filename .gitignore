@@ -14,3 +14,8 @@ apps/desktop/src-tauri/gen/schemas/
 
 # local machine state
 .openpdm/
+
+# example converter build output
+examples/**/bin/
+examples/**/obj/
+examples/**/dist/

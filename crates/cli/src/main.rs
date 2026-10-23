@@ -143,7 +143,7 @@ fn files(repo: &PathBuf, rev: Option<&str>) -> Result<()> {
 fn meta(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
     let bytes = project.blob(rev, path)?;
-    let registry = HandlerRegistry::builtin();
+    let registry = HandlerRegistry::for_project(project.root());
     let handler = registry.resolve(path);
     let meta = handler.metadata(path, &bytes)?;
     println!("handler: {}", handler.name());
@@ -157,7 +157,7 @@ fn meta(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
 fn mesh(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
     let bytes = project.blob(rev, path)?;
-    let registry = HandlerRegistry::builtin();
+    let registry = HandlerRegistry::for_project(project.root());
     let handler = registry.resolve(path);
     match handler.mesh(path, &bytes)? {
         Some(mesh) => {
@@ -180,7 +180,7 @@ fn mesh(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
 fn shapes(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
     let bytes = project.blob(rev, path)?;
-    let registry = HandlerRegistry::builtin();
+    let registry = HandlerRegistry::for_project(project.root());
     let handler = registry.resolve(path);
     let payloads = handler.shape_payloads(path, &bytes)?;
     if payloads.is_empty() {
