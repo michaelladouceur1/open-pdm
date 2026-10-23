@@ -69,7 +69,7 @@ export default function FilesSection() {
       </SectionHeader>
       {!filesCollapsed && (
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-1.5 px-3 pb-3">
+          <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
             {files.length === 0 && (
               <p className="text-xs text-muted-foreground">
                 {showAllFiles ? "No files." : "No changes."}
