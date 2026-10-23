@@ -31,6 +31,13 @@ repository through to a live 3D preview.
   uncommitted working tree. Its changed files can be staged into (and unstaged
   from) the revision via git's index; finalising the revision is not implemented
   yet.
+- **Per-file history, checkout and delete** — the detail panel lists every
+  committed version of the selected part (`Rev A`, `Rev B`, …) beside its
+  metadata. Selecting a version previews it in the 3D viewer; **check out**
+  restores that one file from the chosen revision into the working tree
+  (staged, without moving HEAD), and **delete** rewrites history to drop that
+  one version while keeping later versions. Both actions ask for confirmation
+  first.
 - **Project content allowlist** — only recognised CAD extensions (mesh formats,
   FreeCAD, STEP/IGES, common native CAD, DXF/DWG, …) appear in the Files panel
   and can be staged. Repository metadata, notes and generated files such as the

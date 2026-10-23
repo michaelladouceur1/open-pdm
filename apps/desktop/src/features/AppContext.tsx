@@ -14,8 +14,11 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   CURRENT_REV,
+  checkoutFile as checkoutFileAt,
   commitStaged,
   createProject,
+  deleteFileRevision as deleteFileRevisionAt,
+  getFileRevisions,
   getFiles,
   getMesh,
   getMetadata,
@@ -54,6 +57,14 @@ export interface AppContextValue {
   selectedFile: FileEntry | null;
   metadata: FileMetadata | null;
   mesh: Mesh | null;
+  /** Committed versions of the selected file, newest first; null while loading. */
+  fileRevisions: Revision[] | null;
+  /** Revision currently previewed for the selected file (commit oid or `CURRENT_REV`). */
+  previewRev: string | null;
+  /** True while a previous version is being checked out into the working tree. */
+  checkingOut: boolean;
+  /** True while a version is being deleted from history. */
+  deletingRev: boolean;
   stats: IndexStats | null;
   error: string | null;
   busy: boolean;
@@ -86,6 +97,12 @@ export interface AppContextValue {
   // Selection operations.
   pickRevision: (oid: string) => Promise<void>;
   pickFile: (file: FileEntry) => Promise<void>;
+  /** Preview a specific version of the selected file. */
+  pickFileRev: (oid: string) => Promise<void>;
+  /** Restore the selected file from a revision into the working tree. */
+  checkoutFile: (oid: string) => Promise<void>;
+  /** Delete the selected file's version at a revision from history. */
+  deleteFileRevision: (oid: string) => Promise<void>;
   toggleStaged: (file: FileEntry) => Promise<void>;
 
   // Commit composer for the open "Current" revision.
@@ -128,6 +145,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
   const [metadata, setMetadata] = useState<FileMetadata | null>(null);
   const [mesh, setMesh] = useState<Mesh | null>(null);
+  const [fileRevisions, setFileRevisions] = useState<Revision[] | null>(null);
+  const [previewRev, setPreviewRev] = useState<string | null>(null);
+  const [checkingOut, setCheckingOut] = useState(false);
+  const [deletingRev, setDeletingRev] = useState(false);
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -170,11 +191,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSelectedRev(rev);
       setChangeCount((await getFiles(path, CURRENT_REV)).length);
       setFiles(await getFiles(path, rev, showAllFiles));
-      setSelectedFile(null);
-      setMetadata(null);
-      setMesh(null);
-      setPreviewLoading(false);
-      previewRequestRef.current += 1;
+      clearFilePreview();
     } catch (e) {
       setError(String(e));
       setInfo(null);
@@ -217,13 +234,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await loadPath(selected);
   }
 
-  async function loadFiles(path: string, rev: string | null, showAll: boolean) {
-    setFiles(await getFiles(path, rev, showAll));
+  // Drop the selected file's preview state: metadata, mesh and version history.
+  // Bumping the request id cancels any in-flight preview so a late response
+  // cannot repopulate a file we have moved away from.
+  function clearFilePreview() {
     setSelectedFile(null);
     setMetadata(null);
     setMesh(null);
+    setFileRevisions(null);
+    setPreviewRev(null);
     setPreviewLoading(false);
     previewRequestRef.current += 1;
+  }
+
+  async function loadFiles(path: string, rev: string | null, showAll: boolean) {
+    setFiles(await getFiles(path, rev, showAll));
+    clearFilePreview();
   }
 
   async function pickRevision(oid: string) {
@@ -301,15 +327,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function pickFile(file: FileEntry) {
-    const requestId = (previewRequestRef.current += 1);
-    setSelectedFile(file);
+  // Load the metadata and preview mesh for one version of a file. `requestId`
+  // is the caller's slot in the preview request sequence, so a slow response
+  // for a file/version the user has since left is discarded.
+  async function loadPreview(file: FileEntry, rev: string | null, requestId: number) {
     setMetadata(null);
     setMesh(null);
     setError(null);
     setPreviewLoading(true);
     try {
-      const nextMetadata = await getMetadata(projectPath, file.path, selectedRev);
+      const nextMetadata = await getMetadata(projectPath, file.path, rev);
       if (requestId !== previewRequestRef.current) return;
       setMetadata(nextMetadata);
 
@@ -320,11 +347,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // only when needed.
       let nextMesh: Mesh | null;
       if (nextMetadata.attributes.tessellation) {
-        const payloads = await getShapePayloads(projectPath, file.path, selectedRev);
+        const payloads = await getShapePayloads(projectPath, file.path, rev);
         const { tessellateShapes } = await import("@/lib/occt");
         nextMesh = await tessellateShapes(payloads);
       } else {
-        nextMesh = await getMesh(projectPath, file.path, selectedRev);
+        nextMesh = await getMesh(projectPath, file.path, rev);
       }
 
       if (requestId !== previewRequestRef.current) return;
@@ -334,6 +361,98 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setError(String(e));
     } finally {
       if (requestId === previewRequestRef.current) setPreviewLoading(false);
+    }
+  }
+
+  // Select a file: load its committed version history and preview the version
+  // matching the open revision (the working tree for "Current", or the commit
+  // being browsed).
+  async function pickFile(file: FileEntry) {
+    const requestId = (previewRequestRef.current += 1);
+    setSelectedFile(file);
+    setFileRevisions(null);
+    setPreviewRev(selectedRev);
+    setMetadata(null);
+    setMesh(null);
+    setError(null);
+    setPreviewLoading(true);
+    try {
+      const revs = await getFileRevisions(projectPath, file.path);
+      if (requestId !== previewRequestRef.current) return;
+      setFileRevisions(revs);
+      await loadPreview(file, selectedRev, requestId);
+    } catch (e) {
+      if (requestId !== previewRequestRef.current) return;
+      setFileRevisions([]);
+      setError(String(e));
+      setPreviewLoading(false);
+    }
+  }
+
+  // Preview a different committed version of the selected file.
+  async function pickFileRev(oid: string) {
+    const file = selectedFile;
+    if (!file) return;
+    setPreviewRev(oid);
+    const requestId = (previewRequestRef.current += 1);
+    await loadPreview(file, oid, requestId);
+  }
+
+  // Restore the selected file from `oid` into the working tree. Only that file
+  // is touched; the restored content is staged, so it becomes a change in the
+  // open "Current" revision.
+  async function checkoutFile(oid: string) {
+    const file = selectedFile;
+    if (!file) return;
+    setError(null);
+    setCheckingOut(true);
+    try {
+      await checkoutFileAt(projectPath, file.path, oid);
+      await refreshWorking();
+      // The working tree now matches `oid`; show the restored content.
+      setPreviewRev(oid);
+      const requestId = (previewRequestRef.current += 1);
+      await loadPreview(file, oid, requestId);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCheckingOut(false);
+    }
+  }
+
+  // Delete the selected file's version at `oid` from history. The core rewrites
+  // the commit chain, so the oids change: refresh the revision list, return to
+  // the working tree, and rebuild the file's version history.
+  async function deleteFileRevision(oid: string) {
+    const file = selectedFile;
+    if (!file) return;
+    setError(null);
+    setDeletingRev(true);
+    try {
+      await deleteFileRevisionAt(projectPath, file.path, oid);
+      setRevisions(await getRevisions(projectPath, 50));
+      setSelectedRev(CURRENT_REV);
+
+      // One read of the whole working tree: the changed subset feeds the Files
+      // panel, and it tells us whether the file still exists at all.
+      const worktree = await getFiles(projectPath, CURRENT_REV, true);
+      const changes = worktree.filter((f) => f.status != null || f.staged != null);
+      setChangeCount(changes.length);
+      setFiles(showAllFiles ? worktree : changes);
+
+      if (!worktree.some((f) => f.path === file.path)) {
+        // Deleting the file's only/earliest version removed it entirely.
+        clearFilePreview();
+      } else {
+        setFileRevisions(await getFileRevisions(projectPath, file.path));
+        setPreviewRev(CURRENT_REV);
+        const requestId = (previewRequestRef.current += 1);
+        await loadPreview(file, CURRENT_REV, requestId);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDeletingRev(false);
     }
   }
 
@@ -447,6 +566,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedFile,
     metadata,
     mesh,
+    fileRevisions,
+    previewRev,
+    checkingOut,
+    deletingRev,
     stats,
     error,
     busy,
@@ -471,6 +594,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     buildIndex,
     pickRevision,
     pickFile,
+    pickFileRev,
+    checkoutFile,
+    deleteFileRevision,
     toggleStaged,
     commitMessage,
     setCommitMessage,

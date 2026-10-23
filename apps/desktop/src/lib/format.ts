@@ -23,3 +23,16 @@ export function formatTime(seconds: number): string {
 export function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
+
+/**
+ * Letter label for a file version, counting from the oldest (index 0 -> "A").
+ * Rolls over past "Z" spreadsheet-style ("AA", "AB", ...) for very long-lived
+ * parts.
+ */
+export function revisionLabel(indexFromOldest: number): string {
+  let label = "";
+  for (let n = indexFromOldest + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+    label = String.fromCharCode(65 + ((n - 1) % 26)) + label;
+  }
+  return label;
+}

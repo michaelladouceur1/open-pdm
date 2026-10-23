@@ -69,6 +69,15 @@ fn revisions(path: String, limit: usize) -> Result<Vec<Revision>, String> {
     open(&path)?.revisions(limit).map_err(to_err)
 }
 
+/// Commits that changed a single file, newest first.
+///
+/// Backs the per-file Revisions list in the detail panel. `limit` caps how far
+/// back to walk, so opening a long-lived part does not read the whole history.
+#[tauri::command]
+fn file_revisions(path: String, file: String, limit: usize) -> Result<Vec<Revision>, String> {
+    open(&path)?.file_revisions(&file, limit).map_err(to_err)
+}
+
 /// List the project files for a revision.
 ///
 /// With `all` falsy this is the revision's *changed* files: the open
@@ -116,6 +125,29 @@ fn unstage_file(path: String, file: String) -> Result<(), String> {
 #[tauri::command]
 fn commit(path: String, message: String) -> Result<Revision, String> {
     open(&path)?.commit(&message).map_err(to_err)
+}
+
+/// Restore a single file from a revision into the working tree.
+///
+/// Backs the detail panel's per-revision "check out" action. Only `file` is
+/// touched; the restored content is staged so it becomes part of the open
+/// "Current" revision.
+#[tauri::command]
+fn checkout_file(path: String, file: String, rev: String) -> Result<(), String> {
+    open(&path)?.checkout_file(&rev, &file).map_err(to_err)
+}
+
+/// Remove a single file's version from history.
+///
+/// Backs the detail panel's per-revision "delete" action. Rewrites the commit
+/// so it no longer changes `file` and rewrites the commits after it, so only
+/// that version disappears; every other file is untouched. Commit oids change,
+/// so the UI must refresh its history afterwards.
+#[tauri::command]
+fn delete_file_revision(path: String, file: String, rev: String) -> Result<(), String> {
+    open(&path)?
+        .delete_file_revision(&rev, &file)
+        .map_err(to_err)
 }
 
 #[tauri::command]
@@ -190,10 +222,13 @@ pub fn run() {
             open_project,
             create_project,
             revisions,
+            file_revisions,
             files,
             stage_file,
             unstage_file,
             commit,
+            checkout_file,
+            delete_file_revision,
             metadata,
             mesh,
             shape_payloads,
