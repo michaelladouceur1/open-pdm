@@ -4,13 +4,14 @@
 //! a specific file type (extract metadata, tessellate to a mesh, later: extract
 //! assemblies/BOM) is implemented behind [`CadHandler`] and registered in a
 //! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ), FreeCAD
-//! documents (`.FCStd`), and a converter-backed handler for proprietary/native
-//! CAD formats the core cannot parse itself.
+//! documents (`.FCStd`), STEP (`.step`/`.stp`), and a converter-backed handler
+//! for proprietary/native CAD formats the core cannot parse itself.
 
 pub mod converted;
 pub mod fcstd;
 pub mod generic;
 pub mod obj;
+pub mod step;
 pub mod stl;
 
 use std::collections::BTreeMap;
@@ -88,9 +89,9 @@ pub struct HandlerRegistry {
 }
 
 impl HandlerRegistry {
-    /// The default set of handlers: STL, OBJ, FreeCAD, the converter-backed
-    /// handler (metadata only until a converter is configured) and a catch-all
-    /// fallback.
+    /// The default set of handlers: STL, OBJ, FreeCAD, STEP, the
+    /// converter-backed handler (metadata only until a converter is configured)
+    /// and a catch-all fallback.
     pub fn builtin() -> Self {
         Self::with_converters(Arc::new(ConverterRegistry::empty()))
     }
@@ -104,6 +105,7 @@ impl HandlerRegistry {
                 Box::new(stl::StlHandler),
                 Box::new(obj::ObjHandler),
                 Box::new(fcstd::FcstdHandler),
+                Box::new(step::StepHandler),
                 Box::new(converted::ConvertibleHandler::new(converters)),
                 Box::new(generic::GenericHandler),
             ],
@@ -149,9 +151,9 @@ impl Default for HandlerRegistry {
 /// (repo metadata, notes, generated files like the `*.pdmdb` index) is ignored.
 ///
 /// This is deliberately broader than the set of registered [`CadHandler`]s —
-/// formats such as STEP/IGES are tracked as project content even before the
-/// core learns to tessellate them. The `allowed_extensions_cover_handlers` test
-/// keeps the two lists from drifting.
+/// formats such as IGES and the native CAD formats are tracked as project
+/// content even before the core learns to preview them. The
+/// `allowed_extensions_cover_handlers` test keeps the two lists from drifting.
 pub const PROJECT_EXTENSIONS: &[&str] = &[
     // Meshes and interchange formats.
     "stl", "obj", "ply", "3mf", "gltf", "glb",
@@ -217,7 +219,8 @@ mod tests {
         assert_eq!(reg.resolve("a.SLDPRT").name(), "converted");
         assert_eq!(reg.resolve("a.sldasm").name(), "converted");
         assert_eq!(reg.resolve("a.catpart").name(), "converted");
-        assert_eq!(reg.resolve("a.step").name(), "converted");
+        assert_eq!(reg.resolve("a.step").name(), "step");
+        assert_eq!(reg.resolve("a.STP").name(), "step");
         assert_eq!(reg.resolve("noext").name(), "generic");
     }
 

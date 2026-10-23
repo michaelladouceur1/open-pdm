@@ -313,14 +313,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (requestId !== previewRequestRef.current) return;
       setMetadata(nextMetadata);
 
-      // B-rep documents (e.g. FreeCAD .FCStd) carry exact shapes rather than
-      // triangles; tessellate them in the webview with occt-import-js. The
-      // module is imported dynamically so the wasm loads only when needed.
+      // Exact-geometry documents (FreeCAD .FCStd B-reps, STEP files) carry
+      // shapes rather than triangles; the handler advertises a `tessellation`
+      // codec and we tessellate the payloads in the webview with
+      // occt-import-js. The module is imported dynamically so the wasm loads
+      // only when needed.
       let nextMesh: Mesh | null;
-      if (nextMetadata.attributes.tessellation === "brep") {
+      if (nextMetadata.attributes.tessellation) {
         const payloads = await getShapePayloads(projectPath, file.path, selectedRev);
-        const { tessellateBrep } = await import("@/lib/occt");
-        nextMesh = await tessellateBrep(payloads);
+        const { tessellateShapes } = await import("@/lib/occt");
+        nextMesh = await tessellateShapes(payloads);
       } else {
         nextMesh = await getMesh(projectPath, file.path, selectedRev);
       }

@@ -1,14 +1,15 @@
 /**
- * Client-side B-rep tessellation.
+ * Client-side exact-geometry tessellation.
  *
  * FreeCAD `.FCStd` documents store exact B-rep geometry rather than triangles,
- * so the Rust core hands the viewer the raw `.brp` payloads instead of a mesh.
- * This module feeds those payloads to `occt-import-js` (OpenCASCADE compiled to
- * WebAssembly) and flattens the result into the flat `{ positions, indices }`
- * layout the three.js {@link Viewer} expects.
+ * and STEP files are exact B-rep exchange files, so the Rust core hands the
+ * viewer the raw payloads (`.brp` shapes, or the `.step` file itself) instead of
+ * a mesh. This module feeds those payloads to `occt-import-js` (OpenCASCADE
+ * compiled to WebAssembly) and flattens the result into the flat
+ * `{ positions, indices }` layout the three.js {@link Viewer} expects.
  *
- * The ~7.6 MiB wasm is loaded lazily, on the first B-rep preview, so mesh
- * formats (STL/OBJ) never pay for it.
+ * The ~7.6 MiB wasm is loaded lazily, on the first such preview, so mesh formats
+ * (STL/OBJ) never pay for it.
  */
 import type { ShapePayload } from "@/lib/api";
 
@@ -34,6 +35,7 @@ interface OcctResult {
 
 interface OcctModule {
   ReadBrepFile(content: Uint8Array, params: unknown): OcctResult;
+  ReadStepFile(content: Uint8Array, params: unknown): OcctResult;
 }
 
 type OcctFactory = (config?: {
@@ -46,7 +48,7 @@ function loadOcct(): Promise<OcctModule> {
   if (!occtPromise) {
     occtPromise = (async () => {
       // Both imports are dynamic so the wasm bundle stays out of the initial
-      // payload and is only fetched when a B-rep file is opened.
+      // payload and is only fetched when an exact-geometry file is opened.
       const [module, wasm] = await Promise.all([
         import("occt-import-js/dist/occt-import-js.js"),
         import("occt-import-js/dist/occt-import-js.wasm?url"),
@@ -71,24 +73,42 @@ function base64ToBytes(encoded: string): Uint8Array {
   return bytes;
 }
 
+/** The occt-import-js reader for a payload format, if the viewer supports it. */
+function readerFor(
+  occt: OcctModule,
+  format: string,
+): ((content: Uint8Array, params: unknown) => OcctResult) | null {
+  switch (format) {
+    case "brep":
+      return (content, params) => occt.ReadBrepFile(content, params);
+    case "step":
+      return (content, params) => occt.ReadStepFile(content, params);
+    default:
+      return null;
+  }
+}
+
 /**
- * Tessellate one or more B-rep payloads into a single mesh.
+ * Tessellate one or more exact-geometry payloads (B-rep or STEP) into a single
+ * mesh.
  *
  * Payloads that fail to parse are skipped; a single bad shape must not sink the
  * whole preview. Returns `null` when nothing produced triangles.
  */
-export async function tessellateBrep(payloads: ShapePayload[]): Promise<TessellatedMesh | null> {
+export async function tessellateShapes(payloads: ShapePayload[]): Promise<TessellatedMesh | null> {
   const occt = await loadOcct();
   const positions: number[] = [];
   const indices: number[] = [];
   let vertexOffset = 0;
 
   for (const payload of payloads) {
-    if (payload.format !== "brep" || !payload.data) continue;
+    if (!payload.data) continue;
+    const read = readerFor(occt, payload.format);
+    if (!read) continue;
 
     let result: OcctResult;
     try {
-      result = occt.ReadBrepFile(base64ToBytes(payload.data), null);
+      result = read(base64ToBytes(payload.data), null);
     } catch {
       continue;
     }

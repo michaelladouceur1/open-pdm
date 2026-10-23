@@ -16,16 +16,17 @@ repository through to a live 3D preview.
   git blob oid, so identical content is stored once per revision _and_ across
   repositories. Fully rebuildable from git; never committed.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
-  `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata) and
-  FreeCAD `.FCStd` (document metadata + B-rep shapes), with a generic fallback
-  for everything else. Native/proprietary CAD formats (SolidWorks, Inventor,
+  `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata),
+  FreeCAD `.FCStd` (document metadata + B-rep shapes) and STEP
+  `.step`/`.stp` (header metadata + exact geometry), with a generic fallback for
+  everything else. Native/proprietary CAD formats (SolidWorks, Inventor,
   Creo/NX, CATIA, kernel formats, …) are previewed by delegating to a
   user-configured external converter (see below); without one they still list
   and report metadata.
 - **Desktop app (Tauri v2 + React + Tailwind + shadcn/ui + three.js)** — browse
   revisions and files, inspect extracted metadata, and preview meshes in a 3D
-  viewport. FreeCAD B-rep shapes are tessellated in the webview with
-  `occt-import-js` (OpenCASCADE in WebAssembly).
+  viewport. FreeCAD B-rep shapes and STEP files are tessellated in the webview
+  with `occt-import-js` (OpenCASCADE in WebAssembly).
 - **Open revisions** — the Revisions panel leads with a **Current** entry: the
   uncommitted working tree. Its changed files can be staged into (and unstaged
   from) the revision via git's index; finalising the revision is not implemented
@@ -38,7 +39,7 @@ repository through to a live 3D preview.
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
 Not yet implemented (by design, see the plan): committing the open revision,
-`git-lfs` transfer and locking, STEP/IGES tessellation, native in-process parsing
+`git-lfs` transfer and locking, IGES tessellation, native in-process parsing
 of proprietary formats, remote providers, thumbnails.
 
 ## Architecture
@@ -176,10 +177,20 @@ payloads through `shape_payloads`. The desktop viewer feeds them to
 the first B-rep preview. Assemblies that only link to external parts carry no
 embedded shapes and therefore have no 3D preview.
 
+### STEP files (`.step` / `.stp`)
+
+STEP (ISO 10303-21) is an exact B-rep exchange format, so the core cannot build a
+triangle mesh itself either. The handler parses the exchange header for metadata
+(description, originating system, schema, entity count, …) and advertises
+`tessellation = step`; the viewer then hands the raw file to `occt-import-js`,
+which reads it with `ReadStepFile` and tessellates it in the webview. Unlike
+`.FCStd` there is nothing to unpack — the file *is* the payload — so no external
+converter is needed for STEP.
+
 ### Native CAD formats via an external converter
 
 Formats the core cannot parse itself — SolidWorks (`.sldprt`/`.sldasm`),
-Inventor, Creo/NX, CATIA, kernel/exchange geometry (Parasolid, ACIS, STEP, …) —
+Inventor, Creo/NX, CATIA, kernel/exchange geometry (Parasolid, ACIS, IGES, …) —
 are handled by a single converter-backed handler. It stays format-agnostic: you
 configure an **external command** per format that produces an intermediate STL,
 and the handler reuses the STL parser to build the mesh. There is deliberately no
