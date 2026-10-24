@@ -176,7 +176,7 @@ delegating to an external converter rather than in-process parsing (see below).
 
 A `.FCStd` file is a ZIP container: `Document.xml` is the manifest (document
 metadata, objects and their properties), and each shape-bearing object stores its
-exact geometry as an OpenCASCADE B-rep (`*.brp`). That is *not* a triangle mesh,
+exact geometry as an OpenCASCADE B-rep (`*.brp`). That is _not_ a triangle mesh,
 and the core deliberately has no geometry kernel, so the handler reports rich
 metadata and advertises `tessellation = brep`, then exposes the raw `.brp`
 payloads through `shape_payloads`. The desktop viewer feeds them to
@@ -191,7 +191,7 @@ triangle mesh itself either. The handler parses the exchange header for metadata
 (description, originating system, schema, entity count, …) and advertises
 `tessellation = step`; the viewer then hands the raw file to `occt-import-js`,
 which reads it with `ReadStepFile` and tessellates it in the webview. Unlike
-`.FCStd` there is nothing to unpack — the file *is* the payload — so no external
+`.FCStd` there is nothing to unpack — the file _is_ the payload — so no external
 converter is needed for STEP.
 
 ### Native CAD formats via an external converter
@@ -210,8 +210,8 @@ gitignored, like the SQLite index), keyed by lower-case extension:
 ```json
 {
   "converters": {
-    "sldprt":  { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
-    "sldasm":  { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "sldprt": { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
+    "sldasm": { "program": "edrawings-to-stl", "args": ["{in}", "{out}"] },
     "catpart": { "program": "hoops-exchange-to-stl", "args": ["{in}", "{out}"] }
   }
 }
@@ -233,6 +233,12 @@ It includes build/publish scripts that produce a self-contained `win-x64` exe
 Without a backend the file still lists and reports metadata; the viewer shows a
 hint explaining how to enable the preview. The CLI exposes the same path:
 `openpdm meta <repo> part.sldprt` and `openpdm mesh <repo> part.sldprt`.
+
+### Todo
+
+- [ ] Recent projects list and quick access
+- [ ] Add support for more CAD formats
+- [ ] Revision branching view
 
 ## License
 
