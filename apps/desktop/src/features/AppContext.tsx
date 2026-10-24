@@ -106,6 +106,10 @@ export interface AppContextValue {
   /** Delete the selected file's version at a revision from history. */
   deleteFileRevision: (oid: string) => Promise<void>;
   toggleStaged: (file: FileEntry) => Promise<void>;
+  /** Stage every unstaged working-tree change into the open "Current" revision. */
+  stageAll: () => Promise<void>;
+  /** Unstage every staged change from the open "Current" revision. */
+  unstageAll: () => Promise<void>;
 
   // Commit composer for the open "Current" revision.
   commitMessage: string;
@@ -307,6 +311,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await unstageFile(projectPath, file.path);
       } else {
         await stageFile(projectPath, file.path);
+      }
+      await refreshWorking();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Stage every working-tree change that is not already in the open "Current"
+  // revision.
+  async function stageAll() {
+    setError(null);
+    try {
+      const changes = await getFiles(projectPath, CURRENT_REV);
+      for (const file of changes) {
+        if (!file.staged) await stageFile(projectPath, file.path);
+      }
+      await refreshWorking();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Clear every staged change from the open "Current" revision.
+  async function unstageAll() {
+    setError(null);
+    try {
+      const changes = await getFiles(projectPath, CURRENT_REV);
+      for (const file of changes) {
+        if (file.staged) await unstageFile(projectPath, file.path);
       }
       await refreshWorking();
     } catch (e) {
@@ -621,6 +654,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     checkoutFile,
     deleteFileRevision,
     toggleStaged,
+    stageAll,
+    unstageAll,
     commitMessage,
     setCommitMessage,
     stagedCount,
