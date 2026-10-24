@@ -352,12 +352,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Re-read the selected file's preview after its working-tree content changed.
+  // Reverting a new file deletes it, so in that case the preview is dropped
+  // instead. Files that were not reverted are left untouched.
+  async function reloadPreviewAfterRevert(paths: Set<string>) {
+    const file = selectedFile;
+    if (!file || !paths.has(file.path)) return;
+    const worktree = await getFiles(projectPath, CURRENT_REV, true);
+    if (!worktree.some((entry) => entry.path === file.path)) {
+      clearFilePreview();
+      return;
+    }
+    setPreviewRev(CURRENT_REV);
+    const requestId = (previewRequestRef.current += 1);
+    await loadPreview(projectPath, file, CURRENT_REV, requestId);
+  }
+
   // Discard a single working change, restoring the file to its committed state.
   async function revertFile(file: FileEntry) {
     setError(null);
     try {
       await revertFileAt(projectPath, file.path);
       await refreshWorking();
+      await reloadPreviewAfterRevert(new Set([file.path]));
     } catch (e) {
       setError(String(e));
     }
@@ -372,6 +389,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await revertFileAt(projectPath, file.path);
       }
       await refreshWorking();
+      await reloadPreviewAfterRevert(new Set(changes.map((file) => file.path)));
     } catch (e) {
       setError(String(e));
     }
