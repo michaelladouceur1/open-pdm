@@ -8,6 +8,7 @@ import CommittedFileRow from "./components/CommittedFileRow";
 import SectionHeader from "./components/SectionHeader";
 import ShowAllFilesButton from "./components/ShowAllFilesButton";
 import StageAllButton from "./components/StageAllButton";
+import RevertAllButton from "./components/RevertAllButton";
 import UnstageAllButton from "./components/UnstageAllButton";
 import ViewModeButton from "./components/ViewModeButton";
 import { SECTION_MIN_HEIGHT } from "./constants";
@@ -34,12 +35,15 @@ export default function FilesSection() {
     toggleStaged,
     stageAll,
     unstageAll,
+    revertFile,
+    revertAll,
   } = useApp();
 
   // Staging only applies to the open "Current" revision. A change counts as
   // stageable when it differs from the working tree and is not yet staged.
   const canStageAll = isCurrent && files.some((file) => file.status != null && !file.staged);
   const canUnstageAll = isCurrent && files.some((file) => file.staged === true);
+  const canRevertAll = isCurrent && files.some((file) => file.status != null || file.staged != null);
 
   return (
     <section
@@ -61,6 +65,7 @@ export default function FilesSection() {
           <>
             <StageAllButton disabled={!canStageAll} onStage={() => void stageAll()} />
             <UnstageAllButton disabled={!canUnstageAll} onUnstage={() => void unstageAll()} />
+            <RevertAllButton disabled={!canRevertAll} onRevert={() => void revertAll()} />
             <ShowAllFilesButton active={showAllFiles} onToggle={() => void toggleShowAllFiles()} />
             <ViewModeButton
               mode={filesView}
@@ -95,6 +100,7 @@ export default function FilesSection() {
                     active={selectedFile?.path === file.path}
                     onOpen={() => pickFile(file)}
                     onToggleStage={() => toggleStaged(file)}
+                    onRevert={() => void revertFile(file)}
                   />
                 ))
               : files.map((file) => (

@@ -93,6 +93,10 @@ export const stageFile = (path: string, file: string) =>
 export const unstageFile = (path: string, file: string) =>
   invoke<void>("unstage_file", { path, file });
 
+/** Discard a working change, restoring the file to its committed state. */
+export const revertFile = (path: string, file: string) =>
+  invoke<void>("revert_file", { path, file });
+
 /** Commit the staged changes of the open "Current" revision into history. */
 export const commitStaged = (path: string, message: string) =>
   invoke<Revision>("commit", { path, message });

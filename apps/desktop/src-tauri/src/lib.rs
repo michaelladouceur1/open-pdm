@@ -117,6 +117,12 @@ fn unstage_file(path: String, file: String) -> Result<(), String> {
     open(&path)?.unstage(&file).map_err(to_err)
 }
 
+/// Discard a working change, restoring the file to its committed state.
+#[tauri::command]
+fn revert_file(path: String, file: String) -> Result<(), String> {
+    open(&path)?.revert(&file).map_err(to_err)
+}
+
 /// Commit the staged changes of the open "Current" revision into history.
 ///
 /// Backs the commit composer shown beneath the Revisions header. Returns the
@@ -226,6 +232,7 @@ pub fn run() {
             files,
             stage_file,
             unstage_file,
+            revert_file,
             commit,
             checkout_file,
             delete_file_revision,

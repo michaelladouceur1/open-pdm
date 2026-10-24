@@ -28,6 +28,7 @@ import {
   openProject,
   stageFile,
   unstageFile,
+  revertFile as revertFileAt,
   type FileEntry,
   type FileMetadata,
   type IndexStats,
@@ -110,6 +111,10 @@ export interface AppContextValue {
   stageAll: () => Promise<void>;
   /** Unstage every staged change from the open "Current" revision. */
   unstageAll: () => Promise<void>;
+  /** Discard a single working change, restoring the file to its committed state. */
+  revertFile: (file: FileEntry) => Promise<void>;
+  /** Discard every working-tree change in the open "Current" revision. */
+  revertAll: () => Promise<void>;
 
   // Commit composer for the open "Current" revision.
   commitMessage: string;
@@ -340,6 +345,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const changes = await getFiles(projectPath, CURRENT_REV);
       for (const file of changes) {
         if (file.staged) await unstageFile(projectPath, file.path);
+      }
+      await refreshWorking();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Discard a single working change, restoring the file to its committed state.
+  async function revertFile(file: FileEntry) {
+    setError(null);
+    try {
+      await revertFileAt(projectPath, file.path);
+      await refreshWorking();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Discard every working-tree change in the open "Current" revision.
+  async function revertAll() {
+    setError(null);
+    try {
+      const changes = await getFiles(projectPath, CURRENT_REV);
+      for (const file of changes) {
+        await revertFileAt(projectPath, file.path);
       }
       await refreshWorking();
     } catch (e) {
@@ -656,6 +686,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleStaged,
     stageAll,
     unstageAll,
+    revertFile,
+    revertAll,
     commitMessage,
     setCommitMessage,
     stagedCount,

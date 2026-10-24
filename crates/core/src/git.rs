@@ -522,6 +522,62 @@ impl Project {
         Ok(())
     }
 
+    /// Discard the working-tree change to `path`, restoring it to HEAD.
+    ///
+    /// The equivalent of `git checkout HEAD -- <path>`: a modified or deleted
+    /// tracked file is restored to its committed content, while a new file is
+    /// removed from disk. The index entry is synced to HEAD too, so the path
+    /// stops showing up as a change in the open "Current" revision.
+    pub fn revert(&self, path: &str) -> Result<()> {
+        if self.repo.is_bare() {
+            return Err(Error::NoWorktree(
+                "cannot revert files in a bare repository".into(),
+            ));
+        }
+        let rel = Path::new(path);
+        // Keep the write inside the repository root.
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::UnknownRevision(path.to_string()));
+        }
+
+        // The committed blob for `path`, if HEAD tracks it at all.
+        let head_oid = match self.repo.head() {
+            Ok(head) => {
+                let commit = head.peel_to_commit()?;
+                let tree = commit.tree()?;
+                tree.get_path(rel).ok().map(|entry| entry.id())
+            }
+            Err(_) => None,
+        };
+
+        let dest = self.root.join(rel);
+        let mut index = self.repo.index()?;
+        match head_oid {
+            // Tracked in HEAD: put the committed content back and sync the index.
+            Some(oid) => {
+                let blob = self.repo.find_blob(oid)?;
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&dest, blob.content())?;
+                index.add_path(rel)?;
+            }
+            // New file: drop it from disk and from the index.
+            None => {
+                if dest.exists() {
+                    std::fs::remove_file(&dest)?;
+                }
+                index.remove_path(rel)?;
+            }
+        }
+        index.write()?;
+        Ok(())
+    }
+
     /// Remove a single file's version from history.
     ///
     /// Rewrites the target commit so it no longer changes `path` (reverting the
@@ -954,6 +1010,45 @@ mod tests {
             .unwrap();
         assert_eq!(b.staged, Some(false));
         assert_eq!(b.status.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn reverts_modified_and_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "first");
+        let old = repo.find_commit(repo.refname_to_id("HEAD").unwrap()).unwrap();
+        let old_tree = old.tree().unwrap();
+
+        // Modify the tracked file and add an untracked one, staging both.
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+        std::fs::write(dir.path().join("b.txt"), b"two").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        project.stage("a.txt").unwrap();
+        project.stage("b.txt").unwrap();
+
+        // Reverting the modified file restores its committed content and drops
+        // it from the working changes.
+        project.revert("a.txt").unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("a.txt")).unwrap(),
+            b"one".to_vec()
+        );
+        assert!(!project
+            .working_files()
+            .unwrap()
+            .iter()
+            .any(|f| f.path == "a.txt"));
+
+        // Reverting the new file removes it from disk.
+        project.revert("b.txt").unwrap();
+        assert!(!dir.path().join("b.txt").exists());
+        assert!(project.working_files().unwrap().is_empty());
+
+        // The index is back in sync with HEAD.
+        let index_tree = project.repo.index().unwrap().write_tree().unwrap();
+        assert_eq!(index_tree, old_tree.id());
     }
 
     #[test]
