@@ -3,11 +3,13 @@
 //! The core is deliberately format-agnostic. Anything that needs to understand
 //! a specific file type (extract metadata, tessellate to a mesh, later: extract
 //! assemblies/BOM) is implemented behind [`CadHandler`] and registered in a
-//! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ, PLY, 3MF),
-//! FreeCAD documents (`.FCStd`), STEP (`.step`/`.stp`), and a converter-backed
-//! handler for proprietary/native CAD formats the core cannot parse itself.
+//! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ, PLY, 3MF,
+//! COLLADA), FreeCAD documents (`.FCStd`), STEP (`.step`/`.stp`), and a
+//! converter-backed handler for proprietary/native CAD formats the core cannot
+//! parse itself.
 
 pub mod converted;
+pub mod dae;
 pub mod fcstd;
 pub mod generic;
 pub mod obj;
@@ -91,9 +93,9 @@ pub struct HandlerRegistry {
 }
 
 impl HandlerRegistry {
-    /// The default set of handlers: STL, OBJ, PLY, 3MF, FreeCAD, STEP, the
-    /// converter-backed handler (metadata only until a converter is configured)
-    /// and a catch-all fallback.
+    /// The default set of handlers: STL, OBJ, PLY, 3MF, COLLADA, FreeCAD, STEP,
+    /// the converter-backed handler (metadata only until a converter is
+    /// configured) and a catch-all fallback.
     pub fn builtin() -> Self {
         Self::with_converters(Arc::new(ConverterRegistry::empty()))
     }
@@ -108,6 +110,7 @@ impl HandlerRegistry {
                 Box::new(obj::ObjHandler),
                 Box::new(ply::PlyHandler),
                 Box::new(three_mf::ThreeMfHandler),
+                Box::new(dae::DaeHandler),
                 Box::new(fcstd::FcstdHandler),
                 Box::new(step::StepHandler),
                 Box::new(converted::ConvertibleHandler::new(converters)),
@@ -160,7 +163,7 @@ impl Default for HandlerRegistry {
 /// `allowed_extensions_cover_handlers` test keeps the two lists from drifting.
 pub const PROJECT_EXTENSIONS: &[&str] = &[
     // Meshes and interchange formats.
-    "stl", "obj", "ply", "3mf", "gltf", "glb",
+    "stl", "obj", "ply", "3mf", "gltf", "glb", "dae",
     // FreeCAD.
     "fcstd",
     // STEP / IGES.
@@ -221,6 +224,8 @@ mod tests {
         assert_eq!(reg.resolve("a.PLY").name(), "ply");
         assert_eq!(reg.resolve("a.3mf").name(), "3mf");
         assert_eq!(reg.resolve("a.3MF").name(), "3mf");
+        assert_eq!(reg.resolve("a.dae").name(), "dae");
+        assert_eq!(reg.resolve("a.DAE").name(), "dae");
         assert_eq!(reg.resolve("a.fcstd").name(), "fcstd");
         assert_eq!(reg.resolve("a.FCStd").name(), "fcstd");
         assert_eq!(reg.resolve("a.sldprt").name(), "converted");
@@ -237,6 +242,7 @@ mod tests {
         assert!(is_project_file("part.stl"));
         assert!(is_project_file("assembly.SLDPRT"));
         assert!(is_project_file("drawing.DXF"));
+        assert!(is_project_file("scene.dae"));
         assert!(is_project_file("bracket.step"));
         assert!(!is_project_file("index.pdmdb"));
         assert!(!is_project_file("README.md"));

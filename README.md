@@ -18,7 +18,8 @@ repository through to a live 3D preview.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata),
   PLY (ASCII + binary, little/big-endian), 3MF (ZIP/OPC package, build items and
-  components with transforms), FreeCAD `.FCStd` (document metadata +
+  components with transforms), COLLADA `.dae` (scene graph with node transforms),
+  FreeCAD `.FCStd` (document metadata +
   B-rep shapes) and STEP
   `.step`/`.stp` (header metadata + exact geometry), with a generic fallback for
   everything else. Native/proprietary CAD formats (SolidWorks, Inventor,

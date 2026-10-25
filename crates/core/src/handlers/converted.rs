@@ -23,8 +23,8 @@ use super::{basic_attributes, extension_of, CadHandler, FileMetadata};
 /// Extensions this handler can preview when a converter is configured for them.
 ///
 /// These are the allowlisted formats (see [`super::PROJECT_EXTENSIONS`]) the core
-/// has no native parser for. Mesh formats (STL/OBJ/PLY/3MF), FreeCAD and 2D
-/// drawings are handled elsewhere and deliberately excluded.
+/// has no native parser for. Mesh formats (STL/OBJ/PLY/3MF/COLLADA), FreeCAD and
+/// 2D drawings are handled elsewhere and deliberately excluded.
 pub const CONVERTIBLE_EXTENSIONS: &[&str] = &[
     // SolidWorks.
     "sldprt", "sldasm",
