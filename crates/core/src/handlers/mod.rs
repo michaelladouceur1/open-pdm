@@ -4,14 +4,16 @@
 //! a specific file type (extract metadata, tessellate to a mesh, later: extract
 //! assemblies/BOM) is implemented behind [`CadHandler`] and registered in a
 //! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ, PLY, 3MF,
-//! COLLADA), FreeCAD documents (`.FCStd`), STEP (`.step`/`.stp`), and a
-//! converter-backed handler for proprietary/native CAD formats the core cannot
-//! parse itself.
+//! COLLADA), FreeCAD documents (`.FCStd`), exact-geometry interchange (STEP,
+//! IGES, OpenCASCADE BREP), and a converter-backed handler for proprietary/native
+//! CAD formats the core cannot parse itself.
 
+pub mod brep;
 pub mod converted;
 pub mod dae;
 pub mod fcstd;
 pub mod generic;
+pub mod iges;
 pub mod obj;
 pub mod ply;
 pub mod step;
@@ -93,9 +95,9 @@ pub struct HandlerRegistry {
 }
 
 impl HandlerRegistry {
-    /// The default set of handlers: STL, OBJ, PLY, 3MF, COLLADA, FreeCAD, STEP,
-    /// the converter-backed handler (metadata only until a converter is
-    /// configured) and a catch-all fallback.
+    /// The default set of handlers: STL, OBJ, PLY, 3MF, COLLADA, IGES, BREP,
+    /// FreeCAD, STEP, the converter-backed handler (metadata only until a
+    /// converter is configured) and a catch-all fallback.
     pub fn builtin() -> Self {
         Self::with_converters(Arc::new(ConverterRegistry::empty()))
     }
@@ -111,6 +113,8 @@ impl HandlerRegistry {
                 Box::new(ply::PlyHandler),
                 Box::new(three_mf::ThreeMfHandler),
                 Box::new(dae::DaeHandler),
+                Box::new(iges::IgesHandler),
+                Box::new(brep::BrepHandler),
                 Box::new(fcstd::FcstdHandler),
                 Box::new(step::StepHandler),
                 Box::new(converted::ConvertibleHandler::new(converters)),
@@ -210,6 +214,16 @@ pub(crate) fn fmt_vec3(v: [f32; 3]) -> String {
     format!("{:.3}, {:.3}, {:.3}", v[0], v[1], v[2])
 }
 
+/// The file name of `path` (for naming a shape payload), falling back to the
+/// path itself.
+pub(crate) fn payload_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +248,10 @@ mod tests {
         assert_eq!(reg.resolve("a.catpart").name(), "converted");
         assert_eq!(reg.resolve("a.step").name(), "step");
         assert_eq!(reg.resolve("a.STP").name(), "step");
+        assert_eq!(reg.resolve("a.iges").name(), "iges");
+        assert_eq!(reg.resolve("a.IGS").name(), "iges");
+        assert_eq!(reg.resolve("a.brep").name(), "brep");
+        assert_eq!(reg.resolve("a.brp").name(), "brep");
         assert_eq!(reg.resolve("noext").name(), "generic");
     }
 

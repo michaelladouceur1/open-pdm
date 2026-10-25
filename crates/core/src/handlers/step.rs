@@ -44,7 +44,7 @@ impl CadHandler for StepHandler {
             return Ok(Vec::new());
         }
         Ok(vec![ShapePayload {
-            name: payload_name(path),
+            name: super::payload_name(path),
             format: "step".into(),
             data: bytes.to_vec(),
         }])
@@ -201,14 +201,6 @@ fn count_entities(text: &str) -> usize {
             digits > 0 && rest[digits..].trim_start().starts_with('=')
         })
         .count()
-}
-
-fn payload_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| path.to_string())
 }
 
 #[cfg(test)]

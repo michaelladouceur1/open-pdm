@@ -19,17 +19,17 @@ repository through to a live 3D preview.
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata),
   PLY (ASCII + binary, little/big-endian), 3MF (ZIP/OPC package, build items and
   components with transforms), COLLADA `.dae` (scene graph with node transforms),
-  FreeCAD `.FCStd` (document metadata +
-  B-rep shapes) and STEP
-  `.step`/`.stp` (header metadata + exact geometry), with a generic fallback for
+  FreeCAD `.FCStd` (document metadata + B-rep shapes), STEP `.step`/`.stp`
+  (header metadata + exact geometry), IGES `.iges`/`.igs` and OpenCASCADE BREP
+  `.brep`/`.brp` (section metadata + exact geometry), with a generic fallback for
   everything else. Native/proprietary CAD formats (SolidWorks, Inventor,
   Creo/NX, CATIA, kernel formats, …) are previewed by delegating to a
   user-configured external converter (see below); without one they still list
   and report metadata.
 - **Desktop app (Tauri v2 + React + Tailwind + shadcn/ui + three.js)** — browse
   revisions and files, inspect extracted metadata, and preview meshes in a 3D
-  viewport. FreeCAD B-rep shapes and STEP files are tessellated in the webview
-  with `occt-import-js` (OpenCASCADE in WebAssembly).
+  viewport. Exact-geometry files (FreeCAD B-rep shapes, STEP, IGES, BREP) are
+  tessellated in the webview with `occt-import-js` (OpenCASCADE in WebAssembly).
 - **Open revisions** — the Revisions panel leads with a **Current** entry: the
   uncommitted working tree. Its changed files can be staged into (and unstaged
   from) the revision via git's index; finalising the revision is not implemented
@@ -52,7 +52,7 @@ repository through to a live 3D preview.
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
 Not yet implemented (by design, see the plan): committing the open revision,
-`git-lfs` transfer and locking, IGES tessellation, native in-process parsing
+`git-lfs` transfer and locking, native in-process parsing
 of proprietary formats, remote providers, thumbnails.
 
 ## Architecture
@@ -202,10 +202,21 @@ which reads it with `ReadStepFile` and tessellates it in the webview. Unlike
 `.FCStd` there is nothing to unpack — the file _is_ the payload — so no external
 converter is needed for STEP.
 
+### IGES (`.iges` / `.igs`) and OpenCASCADE BREP (`.brep` / `.brp`)
+
+IGES and BREP are exact geometry, so like STEP they are parsed for metadata and
+tessellated in the webview rather than in the core. The IGES handler walks the
+80-column Start/Global/Directory sections — decoding the Global parameter list,
+including Hollerith (`nHtext`) strings — and advertises `tessellation = iges`;
+the viewer reads it with `occt-import-js`'s `ReadIgesFile`. The BREP handler
+reads the listing's `Locations`/`Curves`/`Surfaces`/… section counts and
+advertises `tessellation = brep`; the viewer reads it with `ReadBrepFile`. In
+both cases the file _is_ the payload, so no external converter is involved.
+
 ### Native CAD formats via an external converter
 
 Formats the core cannot parse itself — SolidWorks (`.sldprt`/`.sldasm`),
-Inventor, Creo/NX, CATIA, kernel/exchange geometry (Parasolid, ACIS, IGES, …) —
+Inventor, Creo/NX, CATIA, kernel geometry (Parasolid, ACIS, …) —
 are handled by a single converter-backed handler. It stays format-agnostic: you
 configure an **external command** per format that produces an intermediate STL,
 and the handler reuses the STL parser to build the mesh. There is deliberately no

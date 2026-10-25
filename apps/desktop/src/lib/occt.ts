@@ -36,6 +36,7 @@ interface OcctResult {
 interface OcctModule {
   ReadBrepFile(content: Uint8Array, params: unknown): OcctResult;
   ReadStepFile(content: Uint8Array, params: unknown): OcctResult;
+  ReadIgesFile(content: Uint8Array, params: unknown): OcctResult;
 }
 
 type OcctFactory = (config?: {
@@ -83,6 +84,8 @@ function readerFor(
       return (content, params) => occt.ReadBrepFile(content, params);
     case "step":
       return (content, params) => occt.ReadStepFile(content, params);
+    case "iges":
+      return (content, params) => occt.ReadIgesFile(content, params);
     default:
       return null;
   }

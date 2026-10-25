@@ -1,7 +1,7 @@
 //! Converter-backed handler for formats the core cannot parse itself.
 //!
 //! Native/proprietary CAD formats (SolidWorks, Inventor, Creo/NX, CATIA, …) and
-//! kernel/exchange geometry (Parasolid, ACIS, IGES, …) have no in-process parser
+//! kernel/exchange geometry (Parasolid, ACIS, …) have no in-process parser
 //! here. Rather than special-case each one, this single handler claims their
 //! extensions and, when the user has configured an external [`Converter`] for
 //! that format (see [`crate::convert`]), converts to an intermediate STL and
@@ -36,10 +36,9 @@ pub const CONVERTIBLE_EXTENSIONS: &[&str] = &[
     "catpart", "catproduct",
     // Fusion 360 / Rhino.
     "f3d", "3dm",
-    // Kernel / exchange geometry.
-    "sat", "sab", "x_t", "x_b", "brep", "brp",
-    // IGES (STEP is handled natively by `StepHandler`).
-    "iges", "igs",
+    // Kernel geometry: Parasolid, ACIS. STEP, IGES and OpenCASCADE BREP have
+    // native handlers (`StepHandler`, `IgesHandler`, `BrepHandler`).
+    "sat", "sab", "x_t", "x_b",
 ];
 
 /// Routes proprietary/native CAD formats through their configured converter.
