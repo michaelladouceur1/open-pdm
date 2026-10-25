@@ -24,6 +24,8 @@ export type StoreValues = {
   revisionsView: "detailed" | "compact";
   /** Path of the most recently opened project, reopened on the next launch. */
   lastProjectPath: string;
+  /** Recently opened project paths, most recent first. */
+  recentProjects: string[];
 };
 
 // A key that identifies a persisted value.
@@ -39,6 +41,7 @@ const STORAGE_KEYS: Record<StoreKey, string> = {
   filesShowAll: "openpdm-files-show-all",
   revisionsView: "openpdm-revisions-view",
   lastProjectPath: "openpdm-last-project-path",
+  recentProjects: "openpdm-recent-projects",
 };
 
 /**

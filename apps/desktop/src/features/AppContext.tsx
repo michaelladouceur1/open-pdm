@@ -37,7 +37,7 @@ import {
   type Revision,
 } from "@/lib/api";
 import { getStored, setStored, type StoreValues } from "@/lib/localStore";
-import { SECTION_DEFAULT_HEIGHT_PCT, SECTION_MIN_HEIGHT } from "./constants";
+import { MAX_RECENT_PROJECTS, SECTION_DEFAULT_HEIGHT_PCT, SECTION_MIN_HEIGHT } from "./constants";
 
 /** Row density used by the Files and Revisions list sections. */
 export type ViewMode = StoreValues["filesView"] | StoreValues["revisionsView"];
@@ -49,6 +49,8 @@ export interface AppContextValue {
   // Project loaded into the workspace.
   projectPath: string;
   setProjectPath: Dispatch<SetStateAction<string>>;
+  /** Recently opened project paths, most recent first (at most {@link MAX_RECENT_PROJECTS}). */
+  recentProjects: string[];
   info: ProjectInfo | null;
   revisions: Revision[];
   selectedRev: string | null;
@@ -93,6 +95,8 @@ export interface AppContextValue {
 
   // Project operations.
   loadPath: (path: string) => Promise<void>;
+  /** Open a project from the recent-projects list. */
+  openRecent: (path: string) => Promise<void>;
   openProjectPicker: () => Promise<void>;
   newProject: () => Promise<void>;
   buildIndex: () => Promise<void>;
@@ -146,6 +150,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Default to the demo project on a first run; later launches reopen whichever
   // project was last loaded.
   const [projectPath, setProjectPath] = useState(() => getStored("lastProjectPath", "/tmp/openpdm-demo"));
+  const [recentProjects, setRecentProjects] = useState<string[]>(() => {
+    const stored = getStored("recentProjects", []);
+    return Array.isArray(stored) ? stored.filter((path) => typeof path === "string") : [];
+  });
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [selectedRev, setSelectedRev] = useState<string | null>(null);
@@ -187,6 +195,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     maxPct: number;
   } | null>(null);
 
+  // Remember a successfully opened project at the top of the recent list,
+  // de-duplicating and keeping only the newest {@link MAX_RECENT_PROJECTS}.
+  function rememberProject(path: string) {
+    setRecentProjects((prev) => [path, ...prev.filter((p) => p !== path)].slice(0, MAX_RECENT_PROJECTS));
+  }
+
   async function loadPath(path: string) {
     setError(null);
     setBusy(true);
@@ -195,8 +209,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       setInfo(await openProject(path));
       // Remember the project that actually opened so the next launch can
-      // restore it.
+      // restore it and the header can offer it again.
       setStored("lastProjectPath", path);
+      rememberProject(path);
       const revs = await getRevisions(path, 50);
       setRevisions(revs);
       // Lead with the open "Current" revision so the working tree is what the
@@ -218,6 +233,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Open a project picked from the recent-projects list: reflect it in the path
+  // box and load it (which also moves it to the top of the list).
+  async function openRecent(path: string) {
+    setProjectPath(path);
+    await loadPath(path);
   }
 
   // Open the native folder picker, then load the chosen project.
@@ -610,6 +632,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setStored("revisionsView", revisionsView);
   }, [revisionsView]);
 
+  useEffect(() => {
+    setStored("recentProjects", recentProjects);
+  }, [recentProjects]);
+
   // Vertical drag handling for the divider between Files and Revisions. The
   // section height is kept as a percentage of the column so the split scales
   // with the window.
@@ -660,6 +686,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppContextValue = {
     projectPath,
     setProjectPath,
+    recentProjects,
     info,
     revisions,
     selectedRev,
@@ -693,6 +720,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setRevisionsView,
     leftColumnRef,
     loadPath,
+    openRecent,
     openProjectPicker,
     newProject,
     buildIndex,

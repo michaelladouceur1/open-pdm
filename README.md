@@ -31,6 +31,9 @@ repository through to a live 3D preview.
   uncommitted working tree. Its changed files can be staged into (and unstaged
   from) the revision via git's index; finalising the revision is not implemented
   yet.
+- **Recent projects** — the path box in the header doubles as a dropdown: its
+  chevron lists the last 10 opened projects for one-click loading, and the list
+  is remembered across launches.
 - **Per-file history, checkout and delete** — the detail panel lists every
   committed version of the selected part (`Rev A`, `Rev B`, …) beside its
   metadata. Selecting a version previews it in the 3D viewer; **check out**
@@ -128,7 +131,9 @@ pnpm tauri build      # release bundle
 
 Use **Open** to pick the folder of an existing project, or **New** to pick a
 folder and initialise a fresh git repository in it. The path box shows (and can
-still be edited to) the current project; it defaults to `/tmp/openpdm-demo`.
+still be edited to) the current project; it defaults to `/tmp/openpdm-demo`. Its
+chevron opens a dropdown of the most recently opened projects (up to 10) for
+quick switching.
 
 ### Packaging a standalone binary
 
@@ -236,7 +241,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 
 ### Todo
 
-- [ ] Recent projects list and quick access
+- [x] Recent projects list and quick access
 - [ ] Add support for more CAD formats
 - [ ] Revision branching view
 
