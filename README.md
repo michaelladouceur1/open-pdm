@@ -17,7 +17,8 @@ repository through to a live 3D preview.
   repositories. Fully rebuildable from git; never committed.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata),
-  FreeCAD `.FCStd` (document metadata + B-rep shapes) and STEP
+  PLY (ASCII + binary, little/big-endian), FreeCAD `.FCStd` (document metadata +
+  B-rep shapes) and STEP
   `.step`/`.stp` (header metadata + exact geometry), with a generic fallback for
   everything else. Native/proprietary CAD formats (SolidWorks, Inventor,
   Creo/NX, CATIA, kernel formats, …) are previewed by delegating to a
@@ -244,6 +245,46 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [x] Recent projects list and quick access
 - [ ] Add support for more CAD formats
 - [ ] Revision branching view
+
+### Potential Formats
+
+#### Tier 1 — mesh-native, high value, small effort (fits mesh())
+
+These are open formats that are already triangle meshes, so a pure-Rust parser drops straight into Mesh:
+
+- PLY — ASCII + binary LE/BE. Already allowlisted; canonical scan/print format. Trivial parser.
+- 3MF — ZIP + XML, so it reuses the exact zip + quick-xml pattern .FCStd already uses, and it carries units, materials, and build items in metadata. Great ROI.
+- glTF / GLB — open Khronos interchange; JSON (+ binary buffer), or load directly client-side with three.js's GLTFLoader (the viewer already pulls from three/examples/jsm).
+- OFF, Collada (.dae), VRML/X3D (.wrl/.x3d) — all open, XML/text mesh formats. Lower priority but nearly free once 3MF/glTF prove the pattern.
+
+#### Tier 2 — exact B-rep via the existing OCCT payload seam (tiny core change)
+
+- IGES (.iges/.igs) — as above; move out of the converter handler.
+- OpenCASCADE BREP (.brep) — already allowlisted and ReadBrepFile is already wired; promote it to a standalone handler rather than only an internal FCStd payload.
+
+#### Tier 3 — open-source CAD/EDA formats needing real parsing (metadata first, geometry later)
+
+This is where "open source CAD software" really pays off, because the formats are documented and text-based:
+
+- KiCad — .kicad_pcb, .kicad_sch, .kicad_pro, .kicad_sym, .kicad_mod. S-expression text, fully open, and the single most PDM-relevant open EDA format. Start with metadata (board outline, layer stack, footprint/component counts, referenced 3D models); a 2D board preview is very achievable, and 3D/STEP via kicad-cli fits the converter seam.
+- Gerber X2 (.gbr) + Excellon (.drl) — open fabrication specs, text, native 2D previews. Natural companion to KiCad for ECAD PDM (fab outputs, revisioned).
+- Gmsh (.msh) — open-source CAE mesh, ASCII/binary, trivially native. Fits a CAD+CAE PDM directly.
+- SolveSpace (.slvs) — open parametric CAD with a documented ASCII format; native metadata is realistic. Geometry is NURBS + constraints (needs a solver), so treat preview as later/best-effort.
+- OpenSCAD (.csg) — the compiled CSG tree is text and could be evaluated with a CSG kernel, but .scad source needs a language interpreter → converter (openscad CLI) is the pragmatic route.
+- VTK legacy/XML (.vtk/.vtu/.vtp), NASTRAN/CalculiX decks (.bdf/.nas/.inp) — open-ish text CAE formats; metadata + surface-mesh extraction.
+- Blender (.blend) and BRL-CAD (.g) — open-source apps, but the on-disk formats are memory-dump/binary databases. Prefer converter (blender --background --python export) or rely on their glTF/OBJ/STEP exports.
+
+#### Tier 4 — open 2D drawing/doc formats
+
+- DXF — open spec, ASCII/binary, already allowlisted, no handler. Native 2D preview (layers, blocks, title blocks) is high value for drawings/part numbers. DWG stays converter-only (LibreDWG dwg2dxf).
+- SVG (laser/waterjet cutting sheets) and HPGL/PLT — native-parseable 2D.
+- PDF — usually just metadata + thumbnail rather than parsing.
+
+#### Tier 5 — futuro / adjacent
+
+- USD / USDA / USDZ (OpenUSD, Apache-2.0) — increasingly the open 3D interchange; .usda is ASCII, .usdz is a zip. Worth planning for.
+- Point clouds — PLY (overlaps Tier 1), PCD, LAS/LAZ, E57 for reverse-engineering workflows.
+- AMF — largely superseded by 3MF; skip.
 
 ## License
 
