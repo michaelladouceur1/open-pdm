@@ -17,7 +17,8 @@ repository through to a live 3D preview.
   repositories. Fully rebuildable from git; never committed.
 - **Pluggable CAD handlers** — format-specific behaviour sits behind a
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata),
-  PLY (ASCII + binary, little/big-endian), FreeCAD `.FCStd` (document metadata +
+  PLY (ASCII + binary, little/big-endian), 3MF (ZIP/OPC package, build items and
+  components with transforms), FreeCAD `.FCStd` (document metadata +
   B-rep shapes) and STEP
   `.step`/`.stp` (header metadata + exact geometry), with a generic fallback for
   everything else. Native/proprietary CAD formats (SolidWorks, Inventor,
@@ -245,6 +246,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [x] Recent projects list and quick access
 - [ ] Add support for more CAD formats
 - [ ] Revision branching view
+- [ ] File relationships (assembly dependencies)
 
 ### Potential Formats
 
