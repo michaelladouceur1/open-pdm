@@ -167,12 +167,21 @@ fn metadata(path: String, file: String, rev: Option<String>) -> Result<FileMetad
         .map_err(to_err)
 }
 
+/// Tessellate a file into a preview mesh.
+///
+/// Runs off the main thread: a configured external converter can take seconds
+/// (up to the converter timeout), and a synchronous command would freeze the UI
+/// for that whole time.
 #[tauri::command]
-fn mesh(path: String, file: String, rev: Option<String>) -> Result<Option<Mesh>, String> {
-    let project = open(&path)?;
-    let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-    let registry = registry(&project);
-    registry.resolve(&file).mesh(&file, &bytes).map_err(to_err)
+async fn mesh(path: String, file: String, rev: Option<String>) -> Result<Option<Mesh>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = open(&path)?;
+        let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
+        let registry = registry(&project);
+        registry.resolve(&file).mesh(&file, &bytes).map_err(to_err)
+    })
+    .await
+    .map_err(to_err)?
 }
 
 /// A raw shape payload sent to the viewer for client-side tessellation.
@@ -212,12 +221,19 @@ fn shape_payloads(
         .collect())
 }
 
+/// Build (or refresh) the project's SQLite index.
+///
+/// Runs off the main thread: indexing walks history and can take a while.
 #[tauri::command]
-fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
-    let project = open(&path)?;
-    let db = project.root().join(".openpdm").join("index.pdmdb");
-    let mut index = Index::open(&db).map_err(to_err)?;
-    index.index(&project, limit).map_err(to_err)
+async fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = open(&path)?;
+        let db = project.root().join(".openpdm").join("index.pdmdb");
+        let mut index = Index::open(&db).map_err(to_err)?;
+        index.index(&project, limit).map_err(to_err)
+    })
+    .await
+    .map_err(to_err)?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

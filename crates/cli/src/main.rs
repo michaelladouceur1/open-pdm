@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use open_pdm_core::{HandlerRegistry, Index, Project};
+use open_pdm_core::{HandlerRegistry, Index, Project, WORKTREE};
 
 #[derive(Parser)]
 #[command(name = "openpdm", version, about = "OpenPDM CLI (first pass)")]
@@ -26,6 +26,7 @@ enum Command {
     /// List files at a revision (defaults to HEAD).
     Files {
         repo: PathBuf,
+        /// Revision to list (default: HEAD). Use `:worktree:` for the working tree.
         #[arg(long)]
         rev: Option<String>,
     },
@@ -34,6 +35,8 @@ enum Command {
     Meta {
         repo: PathBuf,
         path: String,
+        /// Revision to read from (default: HEAD; the working tree when there are
+        /// no commits yet). Use `:worktree:` for the working tree explicitly.
         #[arg(long)]
         rev: Option<String>,
     },
@@ -42,6 +45,8 @@ enum Command {
     Mesh {
         repo: PathBuf,
         path: String,
+        /// Revision to read from (default: HEAD; the working tree when there are
+        /// no commits yet). Use `:worktree:` for the working tree explicitly.
         #[arg(long)]
         rev: Option<String>,
     },
@@ -50,6 +55,8 @@ enum Command {
     Shapes {
         repo: PathBuf,
         path: String,
+        /// Revision to read from (default: HEAD; the working tree when there are
+        /// no commits yet). Use `:worktree:` for the working tree explicitly.
         #[arg(long)]
         rev: Option<String>,
     },
@@ -85,14 +92,31 @@ fn open(repo: &PathBuf) -> Result<Project> {
     Project::open(repo).with_context(|| format!("opening project at {}", repo.display()))
 }
 
+/// Resolve the revision a read command should use. An explicit `--rev` always
+/// wins; otherwise HEAD is used — except in a repository with no commits yet,
+/// where HEAD does not exist, so the working tree is used instead (and we say so
+/// on stderr, since the choice was implicit).
+fn effective_rev(project: &Project, rev: Option<&str>) -> Option<String> {
+    match rev {
+        Some(r) => Some(r.to_string()),
+        None if project.is_unborn() => {
+            eprintln!("note: repository has no commits yet; reading the working tree");
+            Some(WORKTREE.to_string())
+        }
+        None => None,
+    }
+}
+
 fn info(repo: &PathBuf) -> Result<()> {
     let project = open(repo)?;
     println!("root:      {}", project.root().display());
     println!("bare:      {}", project.is_bare());
-    println!(
-        "branch:    {}",
-        project.branch().unwrap_or_else(|| "(detached)".into())
-    );
+    let branch = if project.is_unborn() {
+        "(no commits yet)".to_string()
+    } else {
+        project.branch().unwrap_or_else(|| "(detached)".to_string())
+    };
+    println!("branch:    {branch}");
     match project.head_revision() {
         Ok(rev) => {
             println!("head:      {} {}", rev.short, rev.summary);
@@ -142,7 +166,8 @@ fn files(repo: &PathBuf, rev: Option<&str>) -> Result<()> {
 
 fn meta(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
-    let bytes = project.blob(rev, path)?;
+    let rev = effective_rev(&project, rev);
+    let bytes = project.blob(rev.as_deref(), path)?;
     let registry = HandlerRegistry::for_project(project.root());
     let handler = registry.resolve(path);
     let meta = handler.metadata(path, &bytes)?;
@@ -156,7 +181,8 @@ fn meta(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
 
 fn mesh(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
-    let bytes = project.blob(rev, path)?;
+    let rev = effective_rev(&project, rev);
+    let bytes = project.blob(rev.as_deref(), path)?;
     let registry = HandlerRegistry::for_project(project.root());
     let handler = registry.resolve(path);
     match handler.mesh(path, &bytes)? {
@@ -179,7 +205,8 @@ fn mesh(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
 
 fn shapes(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
-    let bytes = project.blob(rev, path)?;
+    let rev = effective_rev(&project, rev);
+    let bytes = project.blob(rev.as_deref(), path)?;
     let registry = HandlerRegistry::for_project(project.root());
     let handler = registry.resolve(path);
     let payloads = handler.shape_payloads(path, &bytes)?;

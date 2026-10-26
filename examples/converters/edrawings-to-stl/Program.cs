@@ -21,7 +21,6 @@ namespace EDrawingsToStl
         private static EModelViewControl? _ctrl;
         private static string _input = "";
         private static string _output = "";
-        private static int _exitCode = 1;
 
         [STAThread]
         private static int Main(string[] args)
@@ -55,12 +54,21 @@ namespace EDrawingsToStl
             host.Dock = DockStyle.Fill;
 
             Application.Run(form);
-            return _exitCode;
+            // Only reached if the form closes without a result (e.g. dismissed).
+            // A successful or failed conversion exits directly in Finish().
+            return 1;
         }
 
         private static void OnControlLoaded(EModelViewControl ctrl)
         {
             _ctrl = ctrl;
+
+            // Run unattended: eDrawings otherwise pops a modal "STL Export
+            // Options" dialog on Save, which hangs a headless converter until the
+            // caller's timeout kills it. Silent mode + no save prompt keep it
+            // headless. Must be set before OpenDoc/Save.
+            ctrl.EnableFeature[EMVEnableFeatures.eMVSuppressSavePrompt] = true;
+            ctrl.EnableFeature[EMVEnableFeatures.eMVEnableSilentMode] = true;
 
             ctrl.OnFinishedLoadingDocument += OnDocumentLoaded;
             ctrl.OnFailedLoadingDocument += (file, code, message) =>
@@ -85,9 +93,12 @@ namespace EDrawingsToStl
             {
                 Console.Error.WriteLine(error);
             }
-            _exitCode = exitCode;
-            _ctrl?.CloseActiveDoc("");
-            Application.ExitThread();
+
+            // Exit the process outright rather than Application.ExitThread():
+            // unwinding the eDrawings control can block indefinitely even after
+            // the output file has been written and closed, which would leave a
+            // headless converter (and its caller) hanging until the timeout.
+            Environment.Exit(exitCode);
         }
     }
 }

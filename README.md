@@ -123,6 +123,11 @@ target/debug/openpdm index       /path/to/repo
 target/debug/openpdm handlers
 ```
 
+`meta`, `mesh`, `shapes` and `files` read from HEAD by default. Pass
+`--rev :worktree:` to read the on-disk working tree instead; in a repository with
+no commits yet they fall back to the working tree automatically (and say so on
+stderr), so a freshly created project can preview its uncommitted parts.
+
 ### Desktop app
 
 ```sh
@@ -251,7 +256,8 @@ It includes build/publish scripts that produce a self-contained `win-x64` exe
 
 Without a backend the file still lists and reports metadata; the viewer shows a
 hint explaining how to enable the preview. The CLI exposes the same path:
-`openpdm meta <repo> part.sldprt` and `openpdm mesh <repo> part.sldprt`.
+`openpdm meta <repo> part.sldprt` and `openpdm mesh <repo> part.sldprt` — with no
+`--rev`, both read the working tree when the repository has no commits yet.
 
 ### Todo
 

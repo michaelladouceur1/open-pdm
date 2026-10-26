@@ -734,7 +734,18 @@ impl Project {
     fn tree_for(&self, rev: Option<&str>) -> Result<git2::Tree<'_>> {
         match rev {
             Some(r) => Ok(self.repo.revparse_single(r)?.peel_to_tree()?),
-            None => Ok(self.repo.head()?.peel_to_tree()?),
+            None => {
+                // A freshly-initialised repository has an unborn HEAD. `files_at`
+                // degrades to "no files" in that case, but reading a blob at HEAD
+                // cannot: explain it instead of leaking git2's UnbornBranch.
+                if self.is_unborn() {
+                    return Err(Error::UnknownRevision(
+                        "HEAD is unborn (no commits yet) — use --rev :worktree: for the working tree"
+                            .into(),
+                    ));
+                }
+                Ok(self.repo.head()?.peel_to_tree()?)
+            }
         }
     }
 
@@ -935,6 +946,19 @@ mod tests {
         // An unborn repo has no files; this must not error.
         assert!(project.files_at(None).unwrap().is_empty());
         assert!(project.head_revision().is_err());
+    }
+
+    #[test]
+    fn reading_head_on_an_unborn_repo_is_a_clear_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::init(dir.path()).unwrap();
+
+        // `files_at` degrades to "no files" for an unborn HEAD, but reading a
+        // blob at HEAD must explain the situation rather than leaking git2's
+        // UnbornBranch.
+        let err = project.blob(None, "part.sldprt").unwrap_err().to_string();
+        assert!(err.contains("unborn"), "unexpected error: {err}");
+        assert!(err.contains(":worktree:"), "unexpected error: {err}");
     }
 
     #[test]

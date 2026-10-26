@@ -189,6 +189,12 @@ asynchronous and report completion through events. `Program.cs` chains
 `OpenDoc` → `OnFinishedLoadingDocument` → `Save` → `OnFinishedSavingDocument`,
 then exits. `Save` infers the output format from the `.stl` extension.
 
+To run unattended it enables `eMVSuppressSavePrompt` and `eMVEnableSilentMode`
+before loading: without them eDrawings pops a modal **STL Export Options** dialog
+on `Save`, and a headless process hangs until the caller's timeout kills it. On
+completion it exits with `Environment.Exit` rather than `Application.ExitThread`,
+because unwinding the control can block even after the output file is written.
+
 The event-driven flow follows the well-known
 [CodeStack/Xarial eDrawings example](https://www.codestack.net/edrawings-api/output/export/).
 
