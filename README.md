@@ -268,6 +268,10 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [ ] Add support for more CAD formats
 - [ ] Revision branching view
 - [ ] File relationships (assembly dependencies)
+- [ ] GH Actions for creating binaries and converters
+- [ ] No overwrite of existing git project
+- [ ] Clear cache
+- [ ] Central bin dir for converters and app settings
 
 ### Potential Formats
 
