@@ -56,9 +56,14 @@ hardcoded `HintPath`.
 ## Build
 
 The build must run on Windows with eDrawings Viewer installed. The interop
-assembly is looked up under `%ProgramFiles%\SOLIDWORKS Corp\eDrawings` by default.
-If yours lives elsewhere, override it with a property **or** an environment
-variable of the same name:
+assembly is located automatically, so a stock install needs no configuration: it
+is resolved, in order, from the control's COM registration, the legacy
+`%ProgramFiles%\SOLIDWORKS Corp\eDrawings` layout, and any versioned
+`%ProgramFiles%\Common Files\eDrawings<year>` layout (eDrawings 2024 and newer —
+for example `eDrawings2026`).
+
+If eDrawings lives somewhere unusual, override the search with a property **or**
+an environment variable of the same name:
 
 ```bat
 dotnet build -c Release -p:EDrawingsInteropDir="D:\eDrawings"
@@ -78,6 +83,10 @@ The csproj defaults to a **self-contained, single-file `win-x64`** publish, so
 end users need no .NET runtime. Use a wrapper script (which also copies the result
 to `dist/`):
 
+```bat
+publish.cmd
+```
+
 ```powershell
 ./publish.ps1
 ```
@@ -92,6 +101,10 @@ or invoke MSBuild directly:
 dotnet publish -c Release
 ```
 
+`publish.cmd` is the simplest option on Windows: it runs `dotnet publish` directly
+and is unaffected by the PowerShell execution policy. `publish.ps1` is equivalent
+but needs script execution to be allowed — see [Windows notes](#windows-notes).
+
 The output is `bin/Release/net8.0-windows/win-x64/publish/edrawings-to-stl.exe`
 (and a copy at `dist/edrawings-to-stl.exe`), roughly 60–70 MB. To override the
 eDrawings location, pass it through the script or MSBuild:
@@ -100,11 +113,43 @@ eDrawings location, pass it through the script or MSBuild:
 EDrawingsInteropDir='D:\eDrawings' ./publish.sh
 ```
 
+```bat
+set "EDrawingsInteropDir=D:\eDrawings" && publish.cmd
+```
+
 Consider **code-signing** the exe so Windows SmartScreen does not warn users:
 
 ```bat
 signtool sign /fd SHA256 /a dist\edrawings-to-stl.exe
 ```
+
+## Windows notes
+
+`publish.cmd` avoids the issues below. They are worth knowing if you use
+`publish.ps1` or `dotnet` directly.
+
+- **"running scripts is disabled on this system"** — Windows blocks `.ps1` files
+  under the default `Restricted` execution policy. Either use the batch wrapper
+  (`publish.cmd`), bypass the policy for a single command:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\publish.ps1
+  ```
+
+  or allow locally-authored scripts for your account (no admin required):
+
+  ```powershell
+  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+  ```
+
+- **`dotnet` is not recognized** — the .NET SDK is installed but its directory is
+  not on `PATH`. Add `C:\Program Files\dotnet` (or wherever you installed it), or
+  use `publish.cmd`, which falls back to that location automatically.
+
+- **Target framework** — the project targets `net8.0-windows`. The .NET 8 SDK
+  builds it directly. A newer SDK (for example .NET 10) also works as long as it
+  can restore the .NET 8 reference and runtime packs from NuGet, which needs
+  network access the first time; otherwise install the .NET 8 SDK.
 
 ## Wire it into OpenPDM
 

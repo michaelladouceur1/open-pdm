@@ -14,7 +14,7 @@
 
   <!--
     Publish a single, self-contained executable so end users need no .NET
-    runtime:  dotnet publish -c Release   (see ./publish.ps1 or ./publish.sh).
+    runtime:  dotnet publish -c Release   (see ./publish.cmd, ./publish.ps1 or ./publish.sh).
     Override the target with -p:RuntimeIdentifier=... if you ever need to.
   -->
   <PropertyGroup>
@@ -33,12 +33,41 @@
     from the registry by its CLSID, so the interop DLL is never shipped (the
     interop types are embedded below).
 
+    The location is auto-detected, so a stock eDrawings install needs no
+    configuration. Resolution order (first hit wins):
+
+      1. An explicit -p:EDrawingsInteropDir=... (or the EDrawingsInteropDir env var).
+      2. The control's COM registration (its InprocServer32), which points at the
+         install directory regardless of the eDrawings version or folder layout.
+      3. The legacy %ProgramFiles%\SOLIDWORKS Corp\eDrawings layout.
+      4. Any versioned %ProgramFiles%\Common Files\eDrawings* layout
+         (eDrawings 2024 and newer, e.g. eDrawings2026).
+
     Override it with a property or an environment variable of the same name:
       dotnet build   -c Release -p:EDrawingsInteropDir="D:\eDrawings"
       set EDrawingsInteropDir=D:\eDrawings && dotnet build -c Release
   -->
   <PropertyGroup>
-    <EDrawingsInteropDir Condition="'$(EDrawingsInteropDir)' == ''">$(ProgramFiles)\SOLIDWORKS Corp\eDrawings</EDrawingsInteropDir>
+    <!-- 2. COM registration: HKEY_CLASSES_ROOT\CLSID\{...}\InprocServer32 -> EModelView.dll -->
+    <_EDrawingsInprocServer Condition="'$(EDrawingsInteropDir)' == ''">$(Registry:HKEY_CLASSES_ROOT\CLSID\{91CAA896-8C40-484C-84E6-9348C69A82A0}\InprocServer32)</_EDrawingsInprocServer>
+    <_EDrawingsInprocDir Condition="'$(_EDrawingsInprocServer)' != ''">$([System.IO.Path]::GetDirectoryName('$(_EDrawingsInprocServer)'))</_EDrawingsInprocDir>
+    <EDrawingsInteropDir Condition="'$(EDrawingsInteropDir)' == '' AND '$(_EDrawingsInprocDir)' != '' AND Exists('$(_EDrawingsInprocDir)\eDrawings.Interop.EModelViewControl.dll')">$(_EDrawingsInprocDir)</EDrawingsInteropDir>
+
+    <!-- 3. Legacy layout. -->
+    <EDrawingsInteropDir Condition="'$(EDrawingsInteropDir)' == '' AND Exists('$(ProgramFiles)\SOLIDWORKS Corp\eDrawings\eDrawings.Interop.EModelViewControl.dll')">$(ProgramFiles)\SOLIDWORKS Corp\eDrawings</EDrawingsInteropDir>
+  </PropertyGroup>
+
+  <!-- 4. Versioned Common Files layout (eDrawings 2024+). Takes the first match;
+       the registry step above normally selects the active install already. -->
+  <ItemGroup Condition="'$(EDrawingsInteropDir)' == ''">
+    <_EDrawingsCommonFiles Include="$(ProgramFiles)\Common Files\eDrawings*\eDrawings.Interop.EModelViewControl.dll" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(EDrawingsInteropDir)' == ''">
+    <!-- Empty when the glob matched nothing; EnsureEDrawingsInterop then reports it. -->
+    <EDrawingsInteropDir>@(_EDrawingsCommonFiles->'%(RootDir)%(Directory)')</EDrawingsInteropDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <EDrawingsInteropPath>$(EDrawingsInteropDir)\eDrawings.Interop.EModelViewControl.dll</EDrawingsInteropPath>
   </PropertyGroup>
 
@@ -55,7 +84,7 @@
   <Target Name="EnsureEDrawingsInterop"
           BeforeTargets="ResolveReferences"
           Condition="!Exists('$(EDrawingsInteropPath)')">
-    <Error Text="eDrawings interop not found at '$(EDrawingsInteropPath)'. Install eDrawings Viewer, or pass -p:EDrawingsInteropDir=&lt;dir&gt; (or set the EDrawingsInteropDir environment variable)." />
+    <Error Text="eDrawings interop assembly not found at '$(EDrawingsInteropPath)'. Install eDrawings Viewer, or pass -p:EDrawingsInteropDir=&lt;dir&gt; (or set the EDrawingsInteropDir environment variable). Auto-detection checks the control's COM registration, %ProgramFiles%\Common Files\eDrawings* and %ProgramFiles%\SOLIDWORKS Corp\eDrawings." />
   </Target>
 
 </Project>
