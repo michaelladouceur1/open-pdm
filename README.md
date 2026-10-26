@@ -283,6 +283,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [x] Ignore files created for opened files in SW
 - [ ] Update Viewer rendering style (colors, lighting, edge highlights, etc.)
 - [ ] Allow users to ignore certain types of files (app and project level)
+- [ ] Hide terminal that displays whenever a converter is called
 
 ### Potential Formats
 
