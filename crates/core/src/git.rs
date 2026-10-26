@@ -10,6 +10,26 @@ use crate::{Error, Result};
 /// otherwise take a commit oid/ref so previews resolve to on-disk contents.
 pub const WORKTREE: &str = ":worktree:";
 
+/// Directory OpenPDM keeps its own machine-local state in: the SQLite index,
+/// the converter config and the converted-file cache (see [`crate::convert`]).
+///
+/// It is never project content, so it is hidden from every file listing even
+/// when it is not gitignored. In particular a cached conversion keeps the
+/// source's project extension (a `.sldprt` previews via a cached `.stl`), so
+/// without this filter the cache would look like a commit-worthy part.
+pub const INTERNAL_DIR: &str = ".openpdm";
+
+/// Whether `path` is OpenPDM's own [`INTERNAL_DIR`] or lives inside it.
+///
+/// Git paths are relative and slash-separated; a backslash form is normalised
+/// too so a worktree path from a Windows platform check cannot slip through.
+pub fn is_internal_path(path: &str) -> bool {
+    path.replace('\\', "/")
+        .split('/')
+        .next()
+        .is_some_and(|first| first == INTERNAL_DIR)
+}
+
 /// A single commit, flattened for transport to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Revision {
@@ -80,7 +100,41 @@ impl Project {
             .workdir()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| repo.path().to_path_buf());
-        Ok(Self { repo, root })
+        let project = Self { repo, root };
+        project.ensure_internal_ignored()?;
+        Ok(project)
+    }
+
+    /// Add [`INTERNAL_DIR`] to the repository's local exclude file.
+    ///
+    /// OpenPDM's machine-local state (the SQLite index, the converter config
+    /// and the converted-file cache) should never be committed. Writing the
+    /// pattern to `.git/info/exclude` keeps `git status` in a terminal clean
+    /// too, without adding a tracked `.gitignore` to the user's project. The
+    /// file listings already hide [`INTERNAL_DIR`] on their own, so this is
+    /// belt-and-braces for tooling that reads the repository directly.
+    fn ensure_internal_ignored(&self) -> Result<()> {
+        if self.repo.is_bare() {
+            return Ok(());
+        }
+        const PATTERN: &str = ".openpdm/";
+        let exclude = self.repo.path().join("info").join("exclude");
+        if let Some(parent) = exclude.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+        if existing.lines().any(|line| line.trim() == PATTERN) {
+            return Ok(());
+        }
+        let mut contents = existing;
+        if !contents.is_empty() && !contents.ends_with('\n') {
+            contents.push('\n');
+        }
+        contents.push_str("# OpenPDM machine-local state (index, converter cache)\n");
+        contents.push_str(PATTERN);
+        contents.push('\n');
+        std::fs::write(&exclude, contents)?;
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -147,6 +201,9 @@ impl Project {
             if entry.kind() == Some(git2::ObjectType::Blob) {
                 if let Some(name) = entry.name() {
                     let path = format!("{root}{name}");
+                    if is_internal_path(&path) {
+                        return git2::TreeWalkResult::Ok;
+                    }
                     if let Ok(blob) = repo.find_blob(entry.id()) {
                         out.push(FileEntry {
                             path,
@@ -209,6 +266,9 @@ impl Project {
         let mut out = Vec::with_capacity(statuses.len());
         for entry in statuses.iter() {
             let Some(path) = entry.path() else { continue };
+            if is_internal_path(path) {
+                continue;
+            }
             let status = entry.status();
             let (oid, size, is_binary) = self.worktree_blob_info(path);
             out.push(FileEntry {
@@ -262,6 +322,9 @@ impl Project {
 
         let mut out = Vec::with_capacity(paths.len());
         for path in paths {
+            if is_internal_path(&path) {
+                continue;
+            }
             if let Some(file) = changed.get(&path) {
                 out.push(file.clone());
             } else {
@@ -310,6 +373,9 @@ impl Project {
                 };
                 if let Some(path) = path {
                     let path = path.to_string_lossy().replace('\\', "/");
+                    if is_internal_path(&path) {
+                        return true;
+                    }
                     let (oid, size, is_binary) = self.tree_blob_info(&tree, &path);
                     out.push(FileEntry {
                         path,
@@ -916,7 +982,11 @@ mod tests {
     }
 
     fn commit_file(repo: &git2::Repository, name: &str, contents: &[u8], msg: &str) {
-        std::fs::write(repo.workdir().unwrap().join(name), contents).unwrap();
+        let dest = repo.workdir().unwrap().join(name);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(dest, contents).unwrap();
         let mut index = repo.index().unwrap();
         index.add_path(Path::new(name)).unwrap();
         index.write().unwrap();
@@ -1344,5 +1414,116 @@ mod tests {
         assert_eq!(revs[0].summary, "change a to v2");
         assert_eq!(project.blob(None, "a.txt").unwrap(), b"v2");
         assert!(project.working_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn classifies_internal_paths() {
+        assert!(is_internal_path(".openpdm"));
+        assert!(is_internal_path(".openpdm/"));
+        assert!(is_internal_path(".openpdm/cache/stl/conv/abc.stl"));
+        assert!(is_internal_path(".openpdm\\cache\\stl\\abc.stl"));
+        // Only the root `.openpdm` is internal, and only as a whole component.
+        assert!(!is_internal_path("parts/.openpdm/abc.stl"));
+        assert!(!is_internal_path(".openpdm-notes/abc.stl"));
+        assert!(!is_internal_path("part.stl"));
+    }
+
+    #[test]
+    fn hides_the_internal_dir_from_worktree_listings() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "part.stl", b"solid x", "add part");
+
+        // A cached conversion shares the source's project extension, so it must
+        // not surface as a commit-worthy file.
+        let cache = dir
+            .path()
+            .join(".openpdm")
+            .join("cache")
+            .join("stl")
+            .join("conv");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("abc.stl"), b"solid cached").unwrap();
+        std::fs::write(dir.path().join("bracket.stl"), b"solid y").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+        let changes: Vec<String> = project
+            .working_files()
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert_eq!(changes, vec!["bracket.stl"]);
+
+        let all: Vec<String> = project
+            .all_worktree_files()
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert_eq!(all, vec!["bracket.stl", "part.stl"]);
+    }
+
+    #[test]
+    fn hides_the_internal_dir_from_committed_trees() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "part.stl", b"solid x", "add part");
+        // Force an internal file into history to prove the listings hide it.
+        commit_file(
+            &repo,
+            ".openpdm/cache/stl/conv/abc.stl",
+            b"solid cached",
+            "cache",
+        );
+
+        let project = Project::open(dir.path()).unwrap();
+        let paths: Vec<String> = project
+            .files_at(None)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert_eq!(paths, vec!["part.stl"]);
+
+        let changed: Vec<String> = project
+            .changed_files_at("HEAD")
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert!(changed.is_empty(), "unexpected changes: {changed:?}");
+    }
+
+    #[test]
+    fn init_excludes_the_internal_dir_locally() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::init(dir.path()).unwrap();
+
+        // `.openpdm/` is written to the repo-local exclude file (not committed).
+        let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert!(exclude.lines().any(|line| line.trim() == ".openpdm/"));
+
+        // A cache file is therefore ignored by git status and never a change.
+        let cache = dir
+            .path()
+            .join(".openpdm")
+            .join("cache")
+            .join("stl")
+            .join("conv");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("abc.stl"), b"solid cached").unwrap();
+        assert!(project.working_files().unwrap().is_empty());
+
+        // Re-initialising is idempotent: the pattern is not duplicated.
+        Project::init(dir.path()).unwrap();
+        let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert_eq!(
+            exclude
+                .lines()
+                .filter(|line| line.trim() == ".openpdm/")
+                .count(),
+            1
+        );
     }
 }

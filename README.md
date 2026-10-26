@@ -246,7 +246,10 @@ gitignored, like the SQLite index), keyed by lower-case extension:
 bare executable name resolved from `PATH`. The program is run directly (argv, no
 shell). Converted output is cached under `.openpdm/cache/stl/<converter>/` and
 keyed by the input's git blob oid, so identical parts convert once across
-revisions and switching converters invalidates the cache.
+revisions and switching converters invalidates the cache. The `.openpdm/`
+directory is hidden from the project's file listings and added to the
+repository's local exclude file, so a cached artifact (which keeps the source's
+extension) never shows up as a commit-worthy file.
 
 A ready-to-build reference backend that uses the **free eDrawings Viewer API**
 (no SOLIDWORKS license) lives in

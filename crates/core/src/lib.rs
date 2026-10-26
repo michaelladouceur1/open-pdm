@@ -20,7 +20,7 @@ pub use convert::{
     CachedConverter, CommandConverter, Converter, ConverterRegistry, NullConverter, TARGET_STL,
 };
 pub use error::{Error, Result};
-pub use git::{FileEntry, Project, Revision, WORKTREE};
+pub use git::{is_internal_path, FileEntry, Project, Revision, INTERNAL_DIR, WORKTREE};
 pub use handlers::{
     is_project_file, CadHandler, FileMetadata, HandlerRegistry, ShapePayload, PROJECT_EXTENSIONS,
 };
