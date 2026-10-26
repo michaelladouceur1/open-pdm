@@ -61,7 +61,7 @@ export default function DetailPanel() {
   // how to enable the preview instead of the generic message.
   const previewHint =
     metadata?.attributes.preview === "unavailable"
-      ? `No preview available. Configure a converter in .openpdm/converters.json to preview ${metadata.format.toUpperCase()} files.`
+      ? `No preview available. Configure a converter in ~/.openpdm/converters.json to preview ${metadata.format.toUpperCase()} files.`
       : "No preview available for this format.";
 
   const revisionsCard = (

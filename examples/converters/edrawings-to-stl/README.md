@@ -153,8 +153,10 @@ signtool sign /fd SHA256 /a dist\edrawings-to-stl.exe
 
 ## Wire it into OpenPDM
 
-Install eDrawings Viewer and put the published exe somewhere on `PATH` (or use an
-absolute path). Then create `<project>/.openpdm/converters.json`:
+Install eDrawings Viewer and put the published exe somewhere on `PATH`, in
+OpenPDM's app-level `~/.openpdm/bin` directory, or use an absolute path. Then
+create `~/.openpdm/converters.json` (`$HOME/.openpdm` on every OS; the app
+creates the folder on first launch):
 
 ```json
 {
@@ -167,13 +169,14 @@ absolute path). Then create `<project>/.openpdm/converters.json`:
 }
 ```
 
-`program` may be a bare executable name resolved from `PATH` or an absolute path.
-`{in}` and `{out}` are substituted with scratch paths for each conversion; the
-program is run directly (no shell). Converted output is cached by content, so each
-unique part converts once.
+`program` may be a bare executable name resolved from `~/.openpdm/bin` and then
+`PATH`, or an absolute path. `{in}` and `{out}` are substituted with scratch
+paths for each conversion; the program is run directly (no shell). Converted
+output is cached by content, so each unique part converts once — across every
+project.
 
 If the program cannot be launched, OpenPDM surfaces a clear error pointing at
-`PATH` and `converters.json`.
+`~/.openpdm/bin`, `PATH` and `converters.json`.
 
 You can also try it from the CLI without the app:
 

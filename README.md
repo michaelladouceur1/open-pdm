@@ -228,8 +228,9 @@ and the handler reuses the STL parser to build the mesh. There is deliberately n
 bundled dependency on SolidWorks, eDrawings or a commercial SDK — you point
 OpenPDM at whatever engine you own.
 
-Configure backends in `<project>/.openpdm/converters.json` (machine-local and
-gitignored, like the SQLite index), keyed by lower-case extension:
+Configure backends in `~/.openpdm/converters.json` (`$HOME/.openpdm` on every
+OS). This is app-level, not project-level: a converter is set up once and works
+in every project you open. The file is keyed by lower-case extension:
 
 ```json
 {
@@ -242,14 +243,18 @@ gitignored, like the SQLite index), keyed by lower-case extension:
 ```
 
 `{in}` and `{out}` are scratch files the program must read from and write to;
-`{format}` expands to the target (`stl`). `program` may be an absolute path or a
-bare executable name resolved from `PATH`. The program is run directly (argv, no
-shell). Converted output is cached under `.openpdm/cache/stl/<converter>/` and
-keyed by the input's git blob oid, so identical parts convert once across
-revisions and switching converters invalidates the cache. The `.openpdm/`
-directory is hidden from the project's file listings and added to the
-repository's local exclude file, so a cached artifact (which keeps the source's
-extension) never shows up as a commit-worthy file.
+`{format}` expands to the target (`stl`). `program` may be an absolute path, or a
+bare executable name that is looked up in `~/.openpdm/bin` first and then on
+`PATH` — drop a converter binary into `~/.openpdm/bin` and reference it by name
+from every project. The program is run directly (argv, no shell). Converted
+output is cached under `~/.openpdm/cache/stl/<converter>/` and keyed by the
+input's git blob oid, so identical parts convert once across revisions *and*
+projects, and switching converters invalidates the cache.
+
+OpenPDM creates `~/.openpdm/` — an empty `converters.json` and a `bin/`
+directory — on first launch. Only the project-local `.openpdm/` (which holds the
+SQLite index) lives inside a project; it is hidden from file listings and added
+to the repository's local exclude file.
 
 A ready-to-build reference backend that uses the **free eDrawings Viewer API**
 (no SOLIDWORKS license) lives in
@@ -271,7 +276,8 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [ ] GH Actions for creating binaries and converters
 - [ ] No overwrite of existing git project
 - [ ] Clear cache
-- [ ] Central bin dir for converters and app settings
+- [x] Central bin dir for converters and app settings
+- [ ] Ignore files created for opened files in SW
 
 ### Potential Formats
 

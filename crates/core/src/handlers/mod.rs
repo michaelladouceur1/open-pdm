@@ -21,7 +21,6 @@ pub mod stl;
 pub mod three_mf;
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -123,10 +122,12 @@ impl HandlerRegistry {
         }
     }
 
-    /// Registry for a project, loading its converters from
-    /// `<root>/.openpdm/converters.json` (see [`crate::convert`]).
-    pub fn for_project(root: &Path) -> Self {
-        Self::with_converters(Arc::new(ConverterRegistry::load(root)))
+    /// Registry for the app, loading converters from the per-user
+    /// `$HOME/.openpdm/converters.json` (see [`crate::convert`] and
+    /// [`crate::app`]). Converters are app-level, so the same backend is used
+    /// for every project.
+    pub fn for_app() -> Self {
+        Self::with_converters(Arc::new(ConverterRegistry::load(&crate::app::dir())))
     }
 
     /// Find the handler for `path`, falling back to the generic handler.

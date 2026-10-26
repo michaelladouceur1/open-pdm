@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use open_pdm_core::{HandlerRegistry, Index, Project, WORKTREE};
+use open_pdm_core::{HandlerRegistry, Index, Project, INTERNAL_DIR, WORKTREE};
 
 #[derive(Parser)]
 #[command(name = "openpdm", version, about = "OpenPDM CLI (first pass)")]
@@ -76,6 +76,11 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Make sure the app-level converter config directory exists
+    // (`$HOME/.openpdm`, with `converters.json` and `bin/`).
+    if let Err(error) = open_pdm_core::app::ensure() {
+        eprintln!("warning: could not create the OpenPDM config directory: {error}");
+    }
     match cli.command {
         Command::Info { repo } => info(&repo),
         Command::Revisions { repo, limit } => revisions(&repo, limit),
@@ -168,7 +173,7 @@ fn meta(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
     let rev = effective_rev(&project, rev);
     let bytes = project.blob(rev.as_deref(), path)?;
-    let registry = HandlerRegistry::for_project(project.root());
+    let registry = HandlerRegistry::for_app();
     let handler = registry.resolve(path);
     let meta = handler.metadata(path, &bytes)?;
     println!("handler: {}", handler.name());
@@ -183,7 +188,7 @@ fn mesh(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
     let rev = effective_rev(&project, rev);
     let bytes = project.blob(rev.as_deref(), path)?;
-    let registry = HandlerRegistry::for_project(project.root());
+    let registry = HandlerRegistry::for_app();
     let handler = registry.resolve(path);
     match handler.mesh(path, &bytes)? {
         Some(mesh) => {
@@ -207,7 +212,7 @@ fn shapes(repo: &PathBuf, path: &str, rev: Option<&str>) -> Result<()> {
     let project = open(repo)?;
     let rev = effective_rev(&project, rev);
     let bytes = project.blob(rev.as_deref(), path)?;
-    let registry = HandlerRegistry::for_project(project.root());
+    let registry = HandlerRegistry::for_app();
     let handler = registry.resolve(path);
     let payloads = handler.shape_payloads(path, &bytes)?;
     if payloads.is_empty() {
@@ -242,7 +247,7 @@ fn handlers() -> Result<()> {
 
 fn index(repo: &PathBuf, db: Option<PathBuf>, limit: usize) -> Result<()> {
     let project = open(repo)?;
-    let db = db.unwrap_or_else(|| project.root().join(".openpdm").join("index.pdmdb"));
+    let db = db.unwrap_or_else(|| project.root().join(INTERNAL_DIR).join("index.pdmdb"));
     let mut index = Index::open(&db)?;
     let stats = index.index(&project, limit)?;
     println!("index:          {}", db.display());

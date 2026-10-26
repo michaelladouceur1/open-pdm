@@ -7,11 +7,14 @@
 //! intermediate format the core *can* parse (currently [`TARGET_STL`]), and
 //! [`CommandConverter`] implements it by running a user-configured program.
 //!
-//! Converted output is cached under `<root>/.openpdm/cache/<target>/`, keyed by
-//! the input's git blob oid and the converter's [`Converter::id`]. That keeps
-//! the core content-addressed (identical geometry converts once, across
-//! revisions) and invalidates automatically when the converter changes. Like
-//! the SQLite index, the cache is machine-local and never committed.
+//! Configuration and installed converters live in OpenPDM's per-user
+//! application directory (`$HOME/.openpdm`; see [`crate::app`]), so a converter
+//! is set up once and works in every project. Converted output is cached under
+//! `<app>/cache/<target>/`, keyed by the input's git blob oid and the
+//! converter's [`Converter::id`]. That keeps the core content-addressed
+//! (identical geometry converts once, across revisions *and* projects) and
+//! invalidates automatically when the converter changes. The cache is
+//! machine-local and never committed.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -73,6 +76,8 @@ impl Converter for NullConverter {
 pub struct CommandConverter {
     program: String,
     args: Vec<String>,
+    /// App-level directory searched for a bare `program` name before `PATH`.
+    bin_dir: Option<PathBuf>,
     timeout: Duration,
 }
 
@@ -81,6 +86,7 @@ impl CommandConverter {
         Self {
             program: program.into(),
             args,
+            bin_dir: None,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -89,6 +95,41 @@ impl CommandConverter {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Search `dir` for a bare `program` name before consulting `PATH`.
+    ///
+    /// This is what lets an executable dropped into the app-level
+    /// [`bin_dir`](crate::app::bin_dir) be referenced by name in
+    /// `converters.json` and work in every project.
+    pub fn with_bin_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.bin_dir = Some(dir.into());
+        self
+    }
+
+    /// Resolve the configured program to a concrete path.
+    ///
+    /// An absolute `program` is used unchanged. A bare name is looked up in
+    /// [`bin_dir`](Self::bin_dir) first (trying an `.exe` suffix on Windows),
+    /// then left as-is so the OS resolves it from `PATH`.
+    fn program_path(&self) -> PathBuf {
+        let program = Path::new(&self.program);
+        if program.is_absolute() {
+            return program.to_path_buf();
+        }
+        if let Some(bin) = &self.bin_dir {
+            let candidate = bin.join(program);
+            if candidate.is_file() {
+                return candidate;
+            }
+            if cfg!(windows) {
+                let exe = bin.join(format!("{}.exe", self.program));
+                if exe.is_file() {
+                    return exe;
+                }
+            }
+        }
+        program.to_path_buf()
     }
 
     fn substitute(&self, template: &str, input: &Path, output: &Path, target: &str) -> String {
@@ -129,7 +170,7 @@ impl Converter for CommandConverter {
             .map(|arg| self.substitute(arg, &input, &output, target))
             .collect();
 
-        let mut command = Command::new(&self.program);
+        let mut command = Command::new(self.program_path());
         command
             .args(&args)
             .stdin(Stdio::null())
@@ -138,10 +179,10 @@ impl Converter for CommandConverter {
 
         let mut child = command.spawn().map_err(|e| {
             Error::Conversion(format!(
-                "could not run converter '{}' ({e}). If it is a bare name, make sure it is \
-                 installed and on PATH; otherwise check the 'program' path in \
-                 .openpdm/converters.json.",
-                self.program
+                "could not run converter '{}' ({e}). Install it in {} (or on PATH), or check \
+                 the 'program' path in the app's converters.json.",
+                self.program,
+                crate::app::bin_dir().display()
             ))
         })?;
 
@@ -199,7 +240,7 @@ pub struct CachedConverter {
 }
 
 impl CachedConverter {
-    /// `root` is the cache directory (e.g. `<project>/.openpdm/cache`).
+    /// `root` is the cache directory (e.g. `$HOME/.openpdm/cache`).
     pub fn new(inner: Arc<dyn Converter>, root: impl Into<PathBuf>) -> Self {
         Self {
             inner,
@@ -258,7 +299,7 @@ impl Converter for CachedConverter {
     }
 }
 
-/// `converters.json` as read from `<root>/.openpdm/converters.json`.
+/// `converters.json` as read from the app's `$HOME/.openpdm/converters.json`.
 ///
 /// The file maps a file extension (case-insensitive, no dot) to the program
 /// that converts it:
@@ -279,7 +320,7 @@ struct CommandSpec {
     args: Vec<String>,
 }
 
-/// Per-format external converters loaded from a project's `converters.json`.
+/// Per-format external converters loaded from the app's `converters.json`.
 ///
 /// Backends are keyed by lower-case file extension, so a single
 /// [`ConvertibleHandler`](crate::handlers::converted::ConvertibleHandler) can
@@ -311,27 +352,35 @@ impl ConverterRegistry {
         }
     }
 
-    /// Load a project's converters from `<root>/.openpdm/converters.json`.
+    /// Load the app's converters from `<config_dir>/converters.json`.
     ///
-    /// The config lives beside the (gitignored) SQLite index and is machine
-    /// local. A missing or malformed file yields an empty registry, so
-    /// proprietary files degrade to metadata only.
-    pub fn load(root: &Path) -> Self {
-        let config_path = root.join(".openpdm").join("converters.json");
+    /// `config_dir` is OpenPDM's per-user application directory
+    /// ([`crate::app::dir`], i.e. `$HOME/.openpdm`). The config is app-level, so
+    /// a converter configured here works in every project. Converted artifacts
+    /// are cached under `<config_dir>/cache`, and a bare `program` name is
+    /// resolved from `<config_dir>/bin` before `PATH`. A missing or malformed
+    /// file yields an empty registry, so proprietary files degrade to metadata
+    /// only.
+    pub fn load(config_dir: &Path) -> Self {
+        let config_path = config_dir.join("converters.json");
         let Ok(text) = std::fs::read_to_string(&config_path) else {
             return Self::empty();
         };
         let Ok(config) = serde_json::from_str::<ConvertersConfig>(&text) else {
             return Self::empty();
         };
-        let cache_root = root.join(".openpdm").join("cache");
+        let cache_root = config_dir.join("cache");
+        let bin_dir = config_dir.join("bin");
         let backends = config
             .converters
             .into_iter()
             .filter(|(_, spec)| !spec.program.is_empty())
             .map(|(format, spec)| {
                 let backend: Arc<dyn Converter> = Arc::new(CachedConverter::new(
-                    Arc::new(CommandConverter::new(spec.program, spec.args)),
+                    Arc::new(
+                        CommandConverter::new(spec.program, spec.args)
+                            .with_bin_dir(bin_dir.clone()),
+                    ),
                     cache_root.clone(),
                 ));
                 (format.to_ascii_lowercase(), backend)
@@ -467,11 +516,40 @@ mod tests {
     }
 
     #[test]
+    fn command_converter_resolves_bare_name_from_bin_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = if cfg!(windows) {
+            "myconv.exe"
+        } else {
+            "myconv"
+        };
+        std::fs::write(bin.join(exe), b"").unwrap();
+
+        let converter = CommandConverter::new("myconv", vec![]).with_bin_dir(&bin);
+        assert_eq!(converter.program_path(), bin.join(exe));
+    }
+
+    #[test]
+    fn command_converter_leaves_missing_name_for_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let converter = CommandConverter::new("not-installed", vec![]).with_bin_dir(dir.path());
+        assert_eq!(converter.program_path(), PathBuf::from("not-installed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_converter_keeps_absolute_program() {
+        let converter = CommandConverter::new("/opt/conv/tool", vec![]);
+        assert_eq!(converter.program_path(), PathBuf::from("/opt/conv/tool"));
+    }
+
+    #[test]
     fn registry_loads_per_format_backends() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join(".openpdm")).unwrap();
         std::fs::write(
-            dir.path().join(".openpdm").join("converters.json"),
+            dir.path().join("converters.json"),
             r#"{ "converters": {
                 "sldprt": { "program": "sw", "args": ["{in}", "{out}"] },
                 "PRT": { "program": "creo" }

@@ -10,13 +10,13 @@ use crate::{Error, Result};
 /// otherwise take a commit oid/ref so previews resolve to on-disk contents.
 pub const WORKTREE: &str = ":worktree:";
 
-/// Directory OpenPDM keeps its own machine-local state in: the SQLite index,
-/// the converter config and the converted-file cache (see [`crate::convert`]).
+/// Project-local directory OpenPDM keeps machine-local state in: currently the
+/// SQLite index. It is never project content, so it is hidden from every file
+/// listing even when it is not gitignored.
 ///
-/// It is never project content, so it is hidden from every file listing even
-/// when it is not gitignored. In particular a cached conversion keeps the
-/// source's project extension (a `.sldprt` previews via a cached `.stl`), so
-/// without this filter the cache would look like a commit-worthy part.
+/// Converters, by contrast, are app-level and live in the per-user
+/// [`crate::app`] directory (`$HOME/.openpdm`), so they are shared across
+/// projects. See [`crate::convert`].
 pub const INTERNAL_DIR: &str = ".openpdm";
 
 /// Whether `path` is OpenPDM's own [`INTERNAL_DIR`] or lives inside it.
@@ -107,12 +107,12 @@ impl Project {
 
     /// Add [`INTERNAL_DIR`] to the repository's local exclude file.
     ///
-    /// OpenPDM's machine-local state (the SQLite index, the converter config
-    /// and the converted-file cache) should never be committed. Writing the
-    /// pattern to `.git/info/exclude` keeps `git status` in a terminal clean
-    /// too, without adding a tracked `.gitignore` to the user's project. The
-    /// file listings already hide [`INTERNAL_DIR`] on their own, so this is
-    /// belt-and-braces for tooling that reads the repository directly.
+    /// OpenPDM's machine-local state (the SQLite index) should never be
+    /// committed. Writing the pattern to `.git/info/exclude` keeps `git status`
+    /// in a terminal clean too, without adding a tracked `.gitignore` to the
+    /// user's project. The file listings already hide [`INTERNAL_DIR`] on their
+    /// own, so this is belt-and-braces for tooling that reads the repository
+    /// directly.
     fn ensure_internal_ignored(&self) -> Result<()> {
         if self.repo.is_bare() {
             return Ok(());
@@ -130,7 +130,7 @@ impl Project {
         if !contents.is_empty() && !contents.ends_with('\n') {
             contents.push('\n');
         }
-        contents.push_str("# OpenPDM machine-local state (index, converter cache)\n");
+        contents.push_str("# OpenPDM machine-local state (index)\n");
         contents.push_str(PATTERN);
         contents.push('\n');
         std::fs::write(&exclude, contents)?;

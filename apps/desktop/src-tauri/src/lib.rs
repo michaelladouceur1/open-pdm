@@ -8,7 +8,7 @@
 use base64::Engine as _;
 use open_pdm_core::{
     is_project_file, FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project,
-    Revision, WORKTREE,
+    Revision, INTERNAL_DIR, WORKTREE,
 };
 use serde::Serialize;
 
@@ -30,10 +30,11 @@ fn open(path: &str) -> Result<Project, String> {
     Project::open(path).map_err(to_err)
 }
 
-/// Handler registry for a project, including its configured external converter
-/// (see `<root>/.openpdm/converters.json`). Enables `.sldprt`/`.sldasm` previews.
-fn registry(project: &Project) -> HandlerRegistry {
-    HandlerRegistry::for_project(project.root())
+/// Handler registry, including the app's configured external converters
+/// (see `$HOME/.openpdm/converters.json`). Enables `.sldprt`/`.sldasm` previews
+/// in every project once a converter is installed.
+fn registry() -> HandlerRegistry {
+    HandlerRegistry::for_app()
 }
 
 /// Flatten a [`Project`] for transport to the UI.
@@ -160,7 +161,7 @@ fn delete_file_revision(path: String, file: String, rev: String) -> Result<(), S
 fn metadata(path: String, file: String, rev: Option<String>) -> Result<FileMetadata, String> {
     let project = open(&path)?;
     let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-    let registry = registry(&project);
+    let registry = registry();
     registry
         .resolve(&file)
         .metadata(&file, &bytes)
@@ -177,7 +178,7 @@ async fn mesh(path: String, file: String, rev: Option<String>) -> Result<Option<
     tauri::async_runtime::spawn_blocking(move || {
         let project = open(&path)?;
         let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-        let registry = registry(&project);
+        let registry = registry();
         registry.resolve(&file).mesh(&file, &bytes).map_err(to_err)
     })
     .await
@@ -206,7 +207,7 @@ fn shape_payloads(
 ) -> Result<Vec<ShapePayloadDto>, String> {
     let project = open(&path)?;
     let bytes = project.blob(rev.as_deref(), &file).map_err(to_err)?;
-    let registry = registry(&project);
+    let registry = registry();
     let payloads = registry
         .resolve(&file)
         .shape_payloads(&file, &bytes)
@@ -228,7 +229,7 @@ fn shape_payloads(
 async fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = open(&path)?;
-        let db = project.root().join(".openpdm").join("index.pdmdb");
+        let db = project.root().join(INTERNAL_DIR).join("index.pdmdb");
         let mut index = Index::open(&db).map_err(to_err)?;
         index.index(&project, limit).map_err(to_err)
     })
@@ -238,6 +239,12 @@ async fn index_project(path: String, limit: usize) -> Result<IndexStats, String>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Ensure the app-level converter directory (`$HOME/.openpdm`) exists, with
+    // its `bin/` subdirectory and a starter `converters.json`, so the location
+    // the user edits is discoverable without running a converter first.
+    if let Err(error) = open_pdm_core::app::ensure() {
+        eprintln!("warning: could not create the OpenPDM config directory: {error}");
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
