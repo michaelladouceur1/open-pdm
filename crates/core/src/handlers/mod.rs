@@ -181,10 +181,27 @@ pub const PROJECT_EXTENSIONS: &[&str] = &[
     "dxf", "dwg",
 ];
 
+/// Whether `path` names a CAD application lock/temp file.
+///
+/// SolidWorks (and other Windows apps) drop a transitory `~$` file beside a
+/// document while it is open — e.g. `~$Block.SLDPRT`. These are not project
+/// content: they appear and vanish with the application, so they are never
+/// listed or staged even though their extension otherwise looks like a CAD
+/// format.
+pub fn is_lock_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("~$"))
+}
+
 /// Whether `path` has an extension that counts as project content.
+///
+/// CAD lock files (see [`is_lock_file`]) are excluded even when their extension
+/// is a known CAD format.
 pub fn is_project_file(path: &str) -> bool {
     let ext = extension_of(path);
-    !ext.is_empty() && PROJECT_EXTENSIONS.contains(&ext.as_str())
+    !is_lock_file(path) && !ext.is_empty() && PROJECT_EXTENSIONS.contains(&ext.as_str())
 }
 
 /// Attributes every handler reports: extension and byte size.
@@ -267,6 +284,14 @@ mod tests {
         assert!(!is_project_file("README.md"));
         assert!(!is_project_file(".gitignore"));
         assert!(!is_project_file("noext"));
+        // CAD application lock files are never project content, even though the
+        // extension alone would otherwise qualify.
+        assert!(is_lock_file("~$Block.SLDPRT"));
+        assert!(is_lock_file("parts/~$Block.SLDPRT"));
+        assert!(is_lock_file("~$Assembly.SLDASM"));
+        assert!(!is_lock_file("Block.SLDPRT"));
+        assert!(!is_project_file("~$Block.SLDPRT"));
+        assert!(!is_project_file("parts/~$Block.SLDPRT"));
     }
 
     #[test]

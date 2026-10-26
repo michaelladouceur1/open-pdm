@@ -19,6 +19,19 @@ pub const WORKTREE: &str = ":worktree:";
 /// projects. See [`crate::convert`].
 pub const INTERNAL_DIR: &str = ".openpdm";
 
+/// Patterns OpenPDM writes to a repository's *local* exclude file
+/// (`.git/info/exclude`) so machine-local and editor-generated paths never show
+/// up as changes. They are deliberately not written to a tracked `.gitignore`,
+/// because they are OpenPDM/editor concerns rather than project content.
+///
+/// * `.openpdm/` — OpenPDM's own [`INTERNAL_DIR`] state (the SQLite index).
+/// * `~$*` — CAD application lock files. SolidWorks and friends drop a
+///   transitory `~$Block.SLDPRT` beside a document while it is open.
+pub const LOCAL_EXCLUDES: &[&str] = &[".openpdm/", "~$*"];
+
+/// Header written above [`LOCAL_EXCLUDES`] in `.git/info/exclude`.
+const EXCLUDE_HEADER: &str = "# Added by OpenPDM: machine-local, never committed";
+
 /// Whether `path` is OpenPDM's own [`INTERNAL_DIR`] or lives inside it.
 ///
 /// Git paths are relative and slash-separated; a backslash form is normalised
@@ -86,7 +99,11 @@ impl Project {
             .workdir()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| repo.path().to_path_buf());
-        Ok(Self { repo, root })
+        let project = Self { repo, root };
+        // Best-effort: refreshing the local excludes is a convenience, not a
+        // precondition for reading a repository (which may be read-only).
+        let _ = project.ensure_local_excludes();
+        Ok(project)
     }
 
     /// Initialise a new git repository rooted at `path` and return a view of it.
@@ -101,38 +118,53 @@ impl Project {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| repo.path().to_path_buf());
         let project = Self { repo, root };
-        project.ensure_internal_ignored()?;
+        project.ensure_local_excludes()?;
         Ok(project)
     }
 
-    /// Add [`INTERNAL_DIR`] to the repository's local exclude file.
+    /// Make sure the repository's local exclude file lists [`LOCAL_EXCLUDES`].
     ///
-    /// OpenPDM's machine-local state (the SQLite index) should never be
-    /// committed. Writing the pattern to `.git/info/exclude` keeps `git status`
-    /// in a terminal clean too, without adding a tracked `.gitignore` to the
-    /// user's project. The file listings already hide [`INTERNAL_DIR`] on their
-    /// own, so this is belt-and-braces for tooling that reads the repository
-    /// directly.
-    fn ensure_internal_ignored(&self) -> Result<()> {
+    /// OpenPDM's machine-local state and CAD applications' transient lock files
+    /// should never be committed. Writing the patterns to `.git/info/exclude`
+    /// keeps `git status` clean in a terminal too, without adding a tracked
+    /// `.gitignore` to the user's project. The file listings hide these paths on
+    /// their own, so this is belt-and-braces for tooling that reads the
+    /// repository directly.
+    fn ensure_local_excludes(&self) -> Result<()> {
         if self.repo.is_bare() {
             return Ok(());
         }
-        const PATTERN: &str = ".openpdm/";
         let exclude = self.repo.path().join("info").join("exclude");
+        let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+        let (has_header, missing): (bool, Vec<&str>) = {
+            let present: BTreeSet<&str> = existing.lines().map(str::trim).collect();
+            (
+                present.contains(EXCLUDE_HEADER),
+                LOCAL_EXCLUDES
+                    .iter()
+                    .copied()
+                    .filter(|pattern| !present.contains(pattern))
+                    .collect(),
+            )
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
         if let Some(parent) = exclude.parent() {
             std::fs::create_dir_all(parent)?;
-        }
-        let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
-        if existing.lines().any(|line| line.trim() == PATTERN) {
-            return Ok(());
         }
         let mut contents = existing;
         if !contents.is_empty() && !contents.ends_with('\n') {
             contents.push('\n');
         }
-        contents.push_str("# OpenPDM machine-local state (index)\n");
-        contents.push_str(PATTERN);
-        contents.push('\n');
+        if !has_header {
+            contents.push_str(EXCLUDE_HEADER);
+            contents.push('\n');
+        }
+        for pattern in missing {
+            contents.push_str(pattern);
+            contents.push('\n');
+        }
         std::fs::write(&exclude, contents)?;
         Ok(())
     }
@@ -1500,9 +1532,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let project = Project::init(dir.path()).unwrap();
 
-        // `.openpdm/` is written to the repo-local exclude file (not committed).
+        // The local exclude patterns are written to the repo-local exclude file
+        // (not committed): OpenPDM state and CAD application lock files.
         let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert!(exclude.lines().any(|line| line.trim() == ".openpdm/"));
+        assert!(exclude.lines().any(|line| line.trim() == "~$*"));
 
         // A cache file is therefore ignored by git status and never a change.
         let cache = dir
@@ -1515,14 +1549,41 @@ mod tests {
         std::fs::write(cache.join("abc.stl"), b"solid cached").unwrap();
         assert!(project.working_files().unwrap().is_empty());
 
-        // Re-initialising is idempotent: the pattern is not duplicated.
+        // Re-initialising is idempotent: the patterns are not duplicated.
         Project::init(dir.path()).unwrap();
         let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        for pattern in [".openpdm/", "~$*"] {
+            assert_eq!(
+                exclude.lines().filter(|line| line.trim() == pattern).count(),
+                1,
+                "pattern {pattern:?} duplicated"
+            );
+        }
+    }
+
+    #[test]
+    fn opening_excludes_cad_lock_files_locally() {
+        let dir = tempfile::tempdir().unwrap();
+        // A repository created without OpenPDM, so only `open` can fix it up.
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "part.stl", b"solid", "first");
+
+        // SolidWorks' lock file for the open document.
+        std::fs::write(dir.path().join("~$part.SLDPRT"), b"lock").unwrap();
+
+        let project = Project::open(dir.path()).unwrap();
+
+        // The pattern is added to the repo-local exclude on open, so the lock
+        // file is not a working change and never listed.
+        let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert!(exclude.lines().any(|line| line.trim() == "~$*"));
+        assert!(project.working_files().unwrap().is_empty());
+
+        // Opening again is idempotent.
+        Project::open(dir.path()).unwrap();
+        let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert_eq!(
-            exclude
-                .lines()
-                .filter(|line| line.trim() == ".openpdm/")
-                .count(),
+            exclude.lines().filter(|line| line.trim() == "~$*").count(),
             1
         );
     }

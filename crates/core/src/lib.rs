@@ -24,7 +24,8 @@ pub use convert::{
 pub use error::{Error, Result};
 pub use git::{is_internal_path, FileEntry, Project, Revision, INTERNAL_DIR, WORKTREE};
 pub use handlers::{
-    is_project_file, CadHandler, FileMetadata, HandlerRegistry, ShapePayload, PROJECT_EXTENSIONS,
+    is_lock_file, is_project_file, CadHandler, FileMetadata, HandlerRegistry, ShapePayload,
+    PROJECT_EXTENSIONS,
 };
 pub use index::{Index, IndexStats};
 pub use mesh::Mesh;

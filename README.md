@@ -254,7 +254,10 @@ projects, and switching converters invalidates the cache.
 OpenPDM creates `~/.openpdm/` — an empty `converters.json` and a `bin/`
 directory — on first launch. Only the project-local `.openpdm/` (which holds the
 SQLite index) lives inside a project; it is hidden from file listings and added
-to the repository's local exclude file.
+to the repository's local exclude file. CAD applications' transient lock files
+(e.g. SolidWorks' `~$Block.SLDPRT`) are treated the same way: hidden from the
+file listings and added to the local exclude file, so they never show up as
+changes or get committed.
 
 A ready-to-build reference backend that uses the **free eDrawings Viewer API**
 (no SOLIDWORKS license) lives in
