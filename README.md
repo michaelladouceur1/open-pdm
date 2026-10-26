@@ -280,7 +280,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [ ] No overwrite of existing git project
 - [ ] Clear cache
 - [x] Central bin dir for converters and app settings
-- [ ] Ignore files created for opened files in SW
+- [x] Ignore files created for opened files in SW
 
 ### Potential Formats
 
