@@ -12,6 +12,12 @@
 //! and nested components are resolved and their transforms composed, so an
 //! assembly renders in place rather than with every object stacked at the
 //! origin.
+//!
+//! Slicers such as Bambu Studio and PrusaSlicer write packages that follow the
+//! 3MF Production Extension: the root model references object resources that
+//! live in separate `3D/Objects/*.model` parts, addressed by a `path` attribute
+//! on build items and components. Those parts are loaded on demand (and cached)
+//! so the referenced geometry is assembled as well.
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
@@ -99,20 +105,17 @@ struct Object {
     id: String,
     positions: Vec<f32>,
     indices: Vec<u32>,
-    components: Vec<Component>,
+    components: Vec<ObjectRef>,
 }
 
-/// A `<component>` reference to another object, with an optional transform.
+/// A reference to an object — from a `<component>` or a `<build><item>` — with
+/// an optional transform. Under the Production Extension the target may live in
+/// a different model part, named by `part` (the `path`/`p:path` attribute);
+/// `None` means "an object in the same part".
 #[derive(Clone)]
-struct Component {
+struct ObjectRef {
     object_id: String,
-    transform: Option<[f32; 12]>,
-}
-
-/// A `<build><item>` placement of an object, with an optional transform.
-#[derive(Clone)]
-struct BuildItem {
-    object_id: String,
+    part: Option<String>,
     transform: Option<[f32; 12]>,
 }
 
@@ -123,116 +126,143 @@ struct Model {
     language: Option<String>,
     metadata: Vec<(String, String)>,
     objects: Vec<Object>,
-    build: Vec<BuildItem>,
+    build: Vec<ObjectRef>,
 }
 
 /// Read and fully parse a `.3mf` package.
 fn parse(bytes: &[u8]) -> Result<ThreeMfDocument> {
-    let mut archive = open_archive(bytes)?;
-    let model_part = find_model_part(&mut archive)?;
-    let xml = read_entry(&mut archive, &model_part)?.ok_or_else(|| {
-        Error::parse("3mf", format!("model part `{model_part}` is missing"))
-    })?;
-    let model = parse_model(&xml)?;
-    let mesh = assemble(&model);
+    let archive = open_archive(bytes)?;
+    let mut loader = PartLoader::new(archive);
+    let root = {
+        let model_part = find_model_part(&mut loader.archive)?;
+        loader.load(&model_part)?
+    };
+    let mesh = assemble(root, &mut loader)?;
 
+    let model = &loader.models[root];
     Ok(ThreeMfDocument {
-        unit: model.unit,
-        language: model.language,
-        metadata: model.metadata,
+        unit: model.unit.clone(),
+        language: model.language.clone(),
+        metadata: model.metadata.clone(),
         object_count: model.objects.len(),
         build_count: model.build.len(),
         mesh,
     })
 }
 
-/// Resolve the build items (or, absent a build, every mesh object) into a single
-/// mesh, composing component/item transforms.
-fn assemble(model: &Model) -> Mesh {
-    let by_id: BTreeMap<&str, &Object> = model
-        .objects
-        .iter()
-        .map(|object| (object.id.as_str(), object))
-        .collect();
-
-    let items: Vec<(&str, Option<[f32; 12]>)> = if model.build.is_empty() {
-        model
-            .objects
-            .iter()
-            .filter(|object| !object.indices.is_empty())
-            .map(|object| (object.id.as_str(), None))
-            .collect()
-    } else {
-        model
-            .build
-            .iter()
-            .map(|item| (item.object_id.as_str(), item.transform))
-            .collect()
+/// Resolve the build items (or, absent a build, every mesh object in the root
+/// part) into a single mesh, composing component/item transforms and following
+/// Production Extension references into other model parts.
+fn assemble(root: usize, loader: &mut PartLoader<'_>) -> Result<Mesh> {
+    let items: Vec<ObjectRef> = {
+        let model = &loader.models[root];
+        if model.build.is_empty() {
+            model
+                .objects
+                .iter()
+                .filter(|object| !object.indices.is_empty())
+                .map(|object| ObjectRef {
+                    object_id: object.id.clone(),
+                    part: None,
+                    transform: None,
+                })
+                .collect()
+        } else {
+            model.build.clone()
+        }
     };
 
     let mut positions = Vec::new();
     let mut indices = Vec::new();
-    for (id, transform) in items {
-        append_object(&by_id, id, transform, 0, &mut positions, &mut indices);
+    for item in items {
+        let part = match &item.part {
+            Some(path) => loader.load(path)?,
+            None => root,
+        };
+        append_object(
+            loader,
+            part,
+            &item.object_id,
+            item.transform,
+            0,
+            &mut positions,
+            &mut indices,
+        )?;
     }
-    Mesh::new(positions, indices)
+    Ok(Mesh::new(positions, indices))
 }
 
 /// Append `id`'s geometry (and, recursively, its components) to the mesh.
 fn append_object(
-    by_id: &BTreeMap<&str, &Object>,
+    loader: &mut PartLoader<'_>,
+    part: usize,
     id: &str,
     transform: Option<[f32; 12]>,
     depth: usize,
     positions: &mut Vec<f32>,
     indices: &mut Vec<u32>,
-) {
+) -> Result<()> {
     if depth > MAX_DEPTH {
-        return;
+        return Ok(());
     }
-    let Some(object) = by_id.get(id) else {
-        return;
+
+    // Push this object's own triangles while holding an immutable borrow of the
+    // loader, then clone just the (small) component list so the borrow can end
+    // before we may need to load another part.
+    let components: Vec<ObjectRef> = {
+        let model = &loader.models[part];
+        let Some(object) = model.objects.iter().find(|object| object.id == id) else {
+            return Ok(());
+        };
+
+        if !object.indices.is_empty() {
+            let local_vertices = (object.positions.len() / 3) as u32;
+            let base = (positions.len() / 3) as u32;
+            match transform {
+                Some(matrix) => {
+                    for vertex in object.positions.chunks_exact(3) {
+                        let point = apply(&matrix, vertex);
+                        positions.extend_from_slice(&point);
+                    }
+                }
+                None => positions.extend_from_slice(&object.positions),
+            }
+            for triangle in object.indices.chunks_exact(3) {
+                // Drop triangles that reference a missing vertex rather than
+                // handing the viewer an out-of-range index.
+                if triangle.iter().any(|&index| index >= local_vertices) {
+                    continue;
+                }
+                indices.push(base + triangle[0]);
+                indices.push(base + triangle[1]);
+                indices.push(base + triangle[2]);
+            }
+        }
+
+        object.components.clone()
     };
 
-    if !object.indices.is_empty() {
-        let local_vertices = (object.positions.len() / 3) as u32;
-        let base = (positions.len() / 3) as u32;
-        match transform {
-            Some(matrix) => {
-                for vertex in object.positions.chunks_exact(3) {
-                    let point = apply(&matrix, vertex);
-                    positions.extend_from_slice(&point);
-                }
-            }
-            None => positions.extend_from_slice(&object.positions),
-        }
-        for triangle in object.indices.chunks_exact(3) {
-            // Drop triangles that reference a missing vertex rather than
-            // handing the viewer an out-of-range index.
-            if triangle.iter().any(|&index| index >= local_vertices) {
-                continue;
-            }
-            indices.push(base + triangle[0]);
-            indices.push(base + triangle[1]);
-            indices.push(base + triangle[2]);
-        }
-    }
-
-    for component in &object.components {
+    for component in &components {
         // A component's transform applies to the child first, then the parent's.
         let child = compose(
             component.transform.unwrap_or(IDENTITY),
             transform.unwrap_or(IDENTITY),
         );
+        let child_part = match &component.part {
+            Some(path) => loader.load(path)?,
+            None => part,
+        };
         append_object(
-            by_id,
+            loader,
+            child_part,
             &component.object_id,
             Some(child),
             depth + 1,
             positions,
             indices,
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Apply a row-vector 4×3 transform to a point.
@@ -368,18 +398,24 @@ fn read_triangle(e: &BytesStart<'_>, model: &mut Model, current: Option<usize>) 
 
 fn read_component(e: &BytesStart<'_>, model: &mut Model, current: Option<usize>) {
     let Some(index) = current else { return };
-    let component = Component {
-        object_id: attr(e, b"objectid").unwrap_or_default(),
-        transform: attr(e, b"transform").as_deref().and_then(parse_transform),
-    };
-    model.objects[index].components.push(component);
+    model.objects[index].components.push(read_ref(e));
 }
 
 fn read_item(e: &BytesStart<'_>, model: &mut Model) {
-    model.build.push(BuildItem {
+    model.build.push(read_ref(e));
+}
+
+/// Read a component/item element into an [`ObjectRef`]. The `path` attribute
+/// (written `p:path` by some producers) marks a Production Extension reference
+/// into another model part.
+fn read_ref(e: &BytesStart<'_>) -> ObjectRef {
+    ObjectRef {
         object_id: attr(e, b"objectid").unwrap_or_default(),
+        part: attr(e, b"path")
+            .map(|path| normalize_part_path(&path))
+            .filter(|path| !path.is_empty()),
         transform: attr(e, b"transform").as_deref().and_then(parse_transform),
-    });
+    }
 }
 
 /// Parse a 3MF `transform`: 12 whitespace-separated numbers (a row-vector 4×3
@@ -407,20 +443,74 @@ fn number(value: &Option<String>) -> f32 {
     value.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0.0)
 }
 
-/// Locate the 3D model part, preferring the `_rels/.rels` relationship and
-/// falling back to the first `*.model` entry.
+/// Locate the root 3D model part, preferring the `_rels/.rels` relationship and
+/// falling back to a conventional `*/3dmodel.model` entry before any `*.model`
+/// (so Production Extension object parts under `3D/Objects/` are not mistaken
+/// for the root).
 fn find_model_part(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String> {
     if let Some(rels) = read_entry(archive, "_rels/.rels")? {
         if let Some(target) = model_relationship_target(&rels) {
-            return Ok(target.trim_start_matches('/').to_string());
+            return Ok(normalize_part_path(&target));
         }
     }
-    for name in entry_names(archive)? {
+    let names = entry_names(archive)?;
+    if let Some(name) = names.iter().find(|name| is_conventional_root_model(name)) {
+        return Ok(name.clone());
+    }
+    for name in names {
         if name.to_ascii_lowercase().ends_with(".model") {
             return Ok(name);
         }
     }
     Err(Error::parse("3mf", "no 3D model part found in package"))
+}
+
+/// Whether `name` looks like the conventional root model part (`3D/3dmodel.model`).
+fn is_conventional_root_model(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let trimmed = lower.trim_start_matches('/');
+    trimmed == "3d/3dmodel.model" || trimmed.ends_with("/3dmodel.model")
+}
+
+/// Normalize a part path for lookup against ZIP entry names: drop a leading
+/// `/` and use `/` separators.
+fn normalize_part_path(path: &str) -> String {
+    path.trim_start_matches('/').replace('\\', "/")
+}
+
+/// Loads and caches 3MF model parts on demand, so Production Extension
+/// references (`path`/`p:path`) can be followed across the package.
+struct PartLoader<'a> {
+    archive: ZipArchive<Cursor<&'a [u8]>>,
+    /// Normalized part path -> index into `models`.
+    index: BTreeMap<String, usize>,
+    /// Parsed parts, indexed by the values in `index`.
+    models: Vec<Model>,
+}
+
+impl<'a> PartLoader<'a> {
+    fn new(archive: ZipArchive<Cursor<&'a [u8]>>) -> Self {
+        Self {
+            archive,
+            index: BTreeMap::new(),
+            models: Vec::new(),
+        }
+    }
+
+    /// Return the index of `path`, parsing and caching it on first use.
+    fn load(&mut self, path: &str) -> Result<usize> {
+        let key = normalize_part_path(path);
+        if let Some(&index) = self.index.get(&key) {
+            return Ok(index);
+        }
+        let xml = read_entry(&mut self.archive, &key)?.ok_or_else(|| {
+            Error::parse("3mf", format!("referenced model part `{key}` is missing"))
+        })?;
+        let index = self.models.len();
+        self.models.push(parse_model(&xml)?);
+        self.index.insert(key, index);
+        Ok(index)
+    }
 }
 
 /// The `Target` of the relationship that points at the 3D model part.
@@ -624,6 +714,106 @@ mod tests {
         let bytes = build_3mf(&[("3D/3dmodel.model", model)]);
         let mesh = ThreeMfHandler.mesh("all.3mf", &bytes).unwrap().unwrap();
         assert_eq!(mesh.triangle_count(), 2);
+    }
+
+    /// A Production Extension object part: one triangle with its own object id.
+    fn object_part() -> &'static str {
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter"
+       xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+       xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">
+  <resources>
+    <object id="1" p:UUID="00000001-0000-0000-0000-000000000000" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0" /><vertex x="1" y="0" z="0" /><vertex x="0" y="1" z="0" />
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2" /></triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build />
+</model>"#
+    }
+
+    #[test]
+    fn follows_production_extension_component_path() {
+        // The build references a root object that is only a component pointing
+        // into a separate model part via `p:path` — Bambu Studio's layout.
+        let root = r#"<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US"
+       xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+       xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+       requiredextensions="p">
+  <metadata name="Application">BambuStudio-01.09.03.50</metadata>
+  <resources>
+    <object id="2" p:UUID="00000002-0000-0000-0000-000000000000" type="model">
+      <components>
+        <component objectid="1" p:path="/3D/Objects/object_1.model"
+                   transform="1 0 0 0 1 0 0 0 1 10 0 0" />
+      </components>
+    </object>
+  </resources>
+  <build p:UUID="00000000-0000-0000-0000-000000000001">
+    <item objectid="2" transform="1 0 0 0 1 0 0 0 1 128 128 0" printable="1" />
+  </build>
+</model>"#;
+        let bytes = build_3mf(&[
+            ("3D/3dmodel.model", root),
+            ("3D/Objects/object_1.model", object_part()),
+        ]);
+        let mesh = ThreeMfHandler.mesh("bambu.3mf", &bytes).unwrap().unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
+        // Component translation (10) composed with the build translation (128).
+        assert_eq!(mesh.bounds(), Some(([138.0, 128.0, 0.0], [139.0, 129.0, 0.0])));
+    }
+
+    #[test]
+    fn follows_production_extension_build_item_path() {
+        // The build item may reference a part directly (unprefixed `path`).
+        let root = r#"<model unit="millimeter">
+  <resources />
+  <build>
+    <item objectid="1" path="/3D/Objects/object_1.model"
+          transform="1 0 0 0 1 0 0 0 1 0 20 0" />
+  </build>
+</model>"#;
+        let bytes = build_3mf(&[
+            ("3D/3dmodel.model", root),
+            ("3D/Objects/object_1.model", object_part()),
+        ]);
+        let mesh = ThreeMfHandler.mesh("plate.3mf", &bytes).unwrap().unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
+        assert_eq!(mesh.bounds(), Some(([0.0, 20.0, 0.0], [1.0, 21.0, 0.0])));
+    }
+
+    #[test]
+    fn prefers_the_root_model_part_over_object_parts() {
+        // Without `_rels/.rels`, the first `*.model` entry is a Production
+        // Extension object part; the root must still be preferred.
+        let root = r#"<model unit="millimeter">
+  <resources>
+    <object id="1"><mesh>
+      <vertices>
+        <vertex x="0" y="0" z="0" /><vertex x="1" y="0" z="0" /><vertex x="0" y="1" z="0" />
+      </vertices>
+      <triangles><triangle v1="0" v2="1" v3="2" /></triangles>
+    </mesh></object>
+  </resources>
+  <build><item objectid="1" /></build>
+</model>"#;
+        let mut object = object_part().to_string();
+        // Give the object part a second triangle so the two are distinguishable.
+        object = object.replace(
+            "<triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\" /></triangles>",
+            "<triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\" /><triangle v1=\"0\" v2=\"1\" v3=\"2\" /></triangles>",
+        );
+        let bytes = build_3mf(&[
+            ("3D/Objects/object_1.model", &object),
+            ("3D/3dmodel.model", root),
+        ]);
+        let mesh = ThreeMfHandler.mesh("no-rels.3mf", &bytes).unwrap().unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
     }
 
     #[test]
