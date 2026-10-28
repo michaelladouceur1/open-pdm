@@ -3,9 +3,6 @@
 An open-source PDM (Product Data Management) app focused on CAD workflows,
 built on **git + git-lfs** as the source of truth for file content.
 
-This repository is a **first pass**: a working vertical slice from a real git
-repository through to a live 3D preview.
-
 ![desktop app](docs/screenshot.png)
 
 ## What works today
@@ -294,7 +291,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [x] Add support for more CAD formats
 - [ ] Revision branching view
 - [ ] File relationships (assembly dependencies)
-- [ ] GH Actions for creating binaries and converters
+- [x] GH Actions for creating binaries and converters
 - [x] No overwrite of existing git project
 - [x] Clear cache
 - [x] Central bin dir for converters and app settings
@@ -302,6 +299,10 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [x] Update Viewer rendering style (colors, lighting, edge highlights, etc.)
 - [x] Allow users to ignore certain types of files (app and project level)
 - [x] Hide terminal that displays whenever a converter is called
+- [ ] Remote origin for git projects
+- [ ] Package git, git-lfs and eDrawings with installers
+- [ ] Package converters with releases
+
 
 ### Potential Formats
 
