@@ -7,10 +7,11 @@
 
 use base64::Engine as _;
 use open_pdm_core::{
-    is_project_file, FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh, Project,
-    Revision, INTERNAL_DIR, WORKTREE,
+    is_tracked, settings_file, FileEntry, FileMetadata, HandlerRegistry, Index, IndexStats, Mesh,
+    Project, Revision, Settings, INTERNAL_DIR, PROJECT_EXTENSIONS, WORKTREE,
 };
 use serde::Serialize;
+use std::path::PathBuf;
 
 /// Flattened summary of an opened project.
 #[derive(Serialize)]
@@ -35,6 +36,24 @@ fn open(path: &str) -> Result<Project, String> {
 /// in every project once a converter is installed.
 fn registry() -> HandlerRegistry {
     HandlerRegistry::for_app()
+}
+
+/// App-level tracking settings, shared across every project.
+fn app_settings() -> Settings {
+    Settings::load(settings_file())
+}
+
+/// Where a project's own tracking settings live (`<root>/.openpdm/settings.json`).
+///
+/// The `.openpdm/` directory is machine-local and excluded from git, so these
+/// settings never become project content.
+fn project_settings_path(project: &Project) -> PathBuf {
+    project.root().join(INTERNAL_DIR).join("settings.json")
+}
+
+/// Project-level tracking settings for `project`.
+fn project_settings(project: &Project) -> Settings {
+    Settings::load(project_settings_path(project))
 }
 
 /// Flatten a [`Project`] for transport to the UI.
@@ -90,9 +109,13 @@ fn file_revisions(path: String, file: String, limit: usize) -> Result<Vec<Revisi
 /// Only files OpenPDM recognises as project content (see
 /// [`open_pdm_core::is_project_file`]) are returned; repository metadata and
 /// generated files such as the `*.pdmdb` index are never shown or staged.
+/// File types the user has deselected — app-wide or for this project — are
+/// excluded too.
 #[tauri::command]
 fn files(path: String, rev: Option<String>, all: Option<bool>) -> Result<Vec<FileEntry>, String> {
     let project = open(&path)?;
+    let app = app_settings();
+    let project_level = project_settings(&project);
     let all = all.unwrap_or(false);
     let mut entries = match rev.as_deref() {
         Some(WORKTREE) if all => project.all_worktree_files(),
@@ -102,7 +125,7 @@ fn files(path: String, rev: Option<String>, all: Option<bool>) -> Result<Vec<Fil
         None => project.files_at(None),
     }
     .map_err(to_err)?;
-    entries.retain(|entry| is_project_file(&entry.path));
+    entries.retain(|entry| is_tracked(&entry.path, &app, &project_level));
     Ok(entries)
 }
 
@@ -225,16 +248,77 @@ fn shape_payloads(
 /// Build (or refresh) the project's SQLite index.
 ///
 /// Runs off the main thread: indexing walks history and can take a while.
+/// File types the user has deselected — app-wide or for this project — are
+/// left out of the index.
 #[tauri::command]
 async fn index_project(path: String, limit: usize) -> Result<IndexStats, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = open(&path)?;
+        let app = app_settings();
+        let project_level = project_settings(&project);
         let db = project.root().join(INTERNAL_DIR).join("index.pdmdb");
         let mut index = Index::open(&db).map_err(to_err)?;
-        index.index(&project, limit).map_err(to_err)
+        index
+            .index_filtered(&project, limit, |file| {
+                is_tracked(file, &app, &project_level)
+            })
+            .map_err(to_err)
     })
     .await
     .map_err(to_err)?
+}
+
+/// Read the project's existing index summary without re-indexing.
+///
+/// Returns `None` when the project has never been indexed. Backs the settings
+/// dialog's Index tab, which reports the current index rather than starting a
+/// run.
+#[tauri::command]
+async fn index_stats(path: String) -> Result<Option<IndexStats>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = open(&path)?;
+        let db = project.root().join(INTERNAL_DIR).join("index.pdmdb");
+        if !db.exists() {
+            return Ok(None);
+        }
+        let index = Index::open(&db).map_err(to_err)?;
+        index.stats().map(Some).map_err(to_err)
+    })
+    .await
+    .map_err(to_err)?
+}
+
+/// The file extensions OpenPDM can track, for the settings dialog to list.
+#[tauri::command]
+fn trackable_extensions() -> Vec<String> {
+    PROJECT_EXTENSIONS.iter().map(|ext| ext.to_string()).collect()
+}
+
+/// App-level tracking settings, shared across every project.
+#[tauri::command]
+fn get_app_settings() -> Settings {
+    app_settings()
+}
+
+/// Persist app-level tracking settings.
+#[tauri::command]
+fn set_app_settings(settings: Settings) -> Result<(), String> {
+    settings.save(settings_file()).map_err(to_err)
+}
+
+/// Tracking settings for a single project.
+#[tauri::command]
+fn get_project_settings(path: String) -> Result<Settings, String> {
+    Ok(project_settings(&open(&path)?))
+}
+
+/// Persist tracking settings for a single project.
+#[tauri::command]
+fn set_project_settings(path: String, settings: Settings) -> Result<(), String> {
+    let project = open(&path)?;
+    settings
+        .save(project_settings_path(&project))
+        .map_err(to_err)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -262,7 +346,13 @@ pub fn run() {
             metadata,
             mesh,
             shape_payloads,
-            index_project
+            index_project,
+            index_stats,
+            trackable_extensions,
+            get_app_settings,
+            set_app_settings,
+            get_project_settings,
+            set_project_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running OpenPDM");

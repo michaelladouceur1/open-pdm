@@ -37,6 +37,13 @@ pub fn converters_file() -> PathBuf {
     dir().join("converters.json")
 }
 
+/// The app-level tracking settings file, `$HOME/.openpdm/settings.json`.
+///
+/// Like converters, these settings are shared across every project.
+pub fn settings_file() -> PathBuf {
+    dir().join("settings.json")
+}
+
 /// Root of the converted-artifact cache, `$HOME/.openpdm/cache`.
 pub fn cache_dir() -> PathBuf {
     dir().join("cache")

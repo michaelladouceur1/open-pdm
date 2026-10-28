@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
 import {
   ChevronDownIcon,
-  DatabaseIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   MoonIcon,
+  SettingsIcon,
   SunIcon,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -15,12 +15,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useApp } from "./AppContext";
-import IndexDialog from "./components/IndexDialog";
 import RecentProjects from "./components/RecentProjects";
+import SettingsDialog from "./components/SettingsDialog";
 
 // Top bar: product mark, editable project path (with a recent-projects
-// dropdown), project actions, the theme toggle and a busy indicator while a
-// project operation is in flight.
+// dropdown), project actions, the theme toggle, settings and a busy indicator
+// while a project operation is in flight.
 export default function Header() {
   const {
     projectPath,
@@ -28,14 +28,12 @@ export default function Header() {
     loadPath,
     newProject,
     openProjectPicker,
-    buildIndex,
-    info,
     theme,
     setTheme,
     busy,
     openRecent,
   } = useApp();
-  const [indexOpen, setIndexOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
   // The popover is anchored to the whole path field so the menu lines up with
   // the input rather than just the narrow chevron button.
@@ -91,17 +89,16 @@ export default function Header() {
           <FolderOpenIcon data-icon="inline-start" />
           Open
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setIndexOpen(true);
-            void buildIndex();
-          }}
-          disabled={busy || !info}
-        >
-          <DatabaseIcon data-icon="inline-start" />
-          Index
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+          >
+            <SettingsIcon />
+          </TooltipTrigger>
+          <TooltipContent>Settings</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
@@ -119,7 +116,7 @@ export default function Header() {
           </span>
         )}
       </header>
-      <IndexDialog open={indexOpen} onOpenChange={setIndexOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   );
 }

@@ -18,14 +18,20 @@ import {
   commitStaged,
   createProject,
   deleteFileRevision as deleteFileRevisionAt,
+  getAppSettings,
   getFileRevisions,
   getFiles,
+  getIndexStats,
   getMesh,
   getMetadata,
+  getProjectSettings,
   getRevisions,
   getShapePayloads,
+  getTrackableExtensions,
   indexProject,
   openProject,
+  setAppSettings as persistAppSettings,
+  setProjectSettings as persistProjectSettings,
   stageFile,
   unstageFile,
   revertFile as revertFileAt,
@@ -35,6 +41,7 @@ import {
   type Mesh,
   type ProjectInfo,
   type Revision,
+  type Settings,
 } from "@/lib/api";
 import { getStored, setStored, type StoreValues } from "@/lib/localStore";
 import { MAX_RECENT_PROJECTS, SECTION_DEFAULT_HEIGHT_PCT, SECTION_MIN_HEIGHT } from "./constants";
@@ -74,6 +81,20 @@ export interface AppContextValue {
   error: string | null;
   busy: boolean;
   previewLoading: boolean;
+
+  // File-tracking settings (which file types are tracked), scoped app-wide and
+  // per project. Backed by `$HOME/.openpdm/settings.json` and
+  // `<project>/.openpdm/settings.json` respectively.
+  appSettings: Settings;
+  projectSettings: Settings;
+  /** Every extension OpenPDM can track, for the settings dialog to list. */
+  trackableExtensions: string[];
+  /** Re-read the existing project index summary (without rebuilding it). */
+  loadIndexStats: () => Promise<void>;
+  /** Persist app-level settings, then refresh the open file listing. */
+  updateAppSettings: (next: Settings) => Promise<void>;
+  /** Persist project-level settings, then refresh the open file listing. */
+  updateProjectSettings: (next: Settings) => Promise<void>;
 
   // Appearance and layout preferences, persisted across launches.
   theme: Theme;
@@ -174,6 +195,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   // True while a file's preview is being produced (e.g. B-rep tessellation).
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Which file types are tracked: an ignore list per scope, loaded from disk.
+  const [appSettings, setAppSettings] = useState<Settings>({ ignored_extensions: [] });
+  const [projectSettings, setProjectSettings] = useState<Settings>({ ignored_extensions: [] });
+  const [trackableExtensions, setTrackableExtensions] = useState<string[]>([]);
   // Draft commit message and in-flight flag for the Current revision composer.
   const [commitMessage, setCommitMessage] = useState("");
   const [committing, setCommitting] = useState(false);
@@ -208,6 +233,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCommitMessage("");
     try {
       setInfo(await openProject(path));
+      setProjectSettings(await getProjectSettings(path));
       // Remember the project that actually opened so the next launch can
       // restore it and the header can offer it again.
       setStored("lastProjectPath", path);
@@ -227,6 +253,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       setError(String(e));
       setInfo(null);
+      setProjectSettings({ ignored_extensions: [] });
       setRevisions([]);
       setFiles([]);
       setChangeCount(0);
@@ -593,10 +620,81 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Read the project's existing index summary without rebuilding it, so the
+  // settings dialog's Index tab can show what is currently indexed.
+  async function loadIndexStats() {
+    if (!info) return;
+    setError(null);
+    try {
+      setStats(await getIndexStats(projectPath));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Re-read the open revision's files after the tracking settings changed, so
+  // newly ignored types disappear (and re-enabled ones reappear). The selected
+  // file's preview is dropped if it is no longer listed.
+  async function refreshFilesAfterSettingsChange() {
+    if (!info || !selectedRev) return;
+    try {
+      setChangeCount((await getFiles(projectPath, CURRENT_REV)).length);
+      const next = await getFiles(projectPath, selectedRev, showAllFiles);
+      setFiles(next);
+      if (selectedFile && !next.some((file) => file.path === selectedFile.path)) {
+        clearFilePreview();
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Persist app-level tracking settings and refresh the open listing. The
+  // state is updated optimistically so rapid toggles each build on the last.
+  async function updateAppSettings(next: Settings) {
+    setAppSettings(next);
+    setError(null);
+    try {
+      await persistAppSettings(next);
+      await refreshFilesAfterSettingsChange();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Persist this project's tracking settings and refresh the open listing.
+  async function updateProjectSettings(next: Settings) {
+    setProjectSettings(next);
+    setError(null);
+    try {
+      await persistProjectSettings(projectPath, next);
+      await refreshFilesAfterSettingsChange();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   // First pass: try to open the default demo path on launch. Intentionally
   // runs once; later loads are driven by the path box, Open and New.
   useEffect(() => {
     void loadPath(projectPath);
+  }, []);
+
+  // App-level settings and the trackable extension list are global; load them
+  // once at startup. Per-project settings load with each project instead.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [app, extensions] = await Promise.all([
+          getAppSettings(),
+          getTrackableExtensions(),
+        ]);
+        setAppSettings(app);
+        setTrackableExtensions(extensions);
+      } catch (e) {
+        setError(String(e));
+      }
+    })();
   }, []);
 
   // Reflect the selected theme with shadcn's `.dark` class on <html>, and
@@ -705,6 +803,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     error,
     busy,
     previewLoading,
+    appSettings,
+    projectSettings,
+    trackableExtensions,
+    loadIndexStats,
+    updateAppSettings,
+    updateProjectSettings,
     theme,
     setTheme,
     filesCollapsed,

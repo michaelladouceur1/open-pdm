@@ -137,11 +137,43 @@ impl Index {
     /// blob/revision rows use upserts and are safe to re-run. Designed to be
     /// fully rebuildable from git.
     pub fn index(&mut self, project: &Project, limit: usize) -> Result<IndexStats> {
+        self.index_filtered(project, limit, |_| true)
+    }
+
+    /// Like [`Self::index`], but only records files for which `tracked` is
+    /// true. Used to honour the app- and project-level tracking settings, which
+    /// exclude user-deselected file types from the index.
+    pub fn index_filtered(
+        &mut self,
+        project: &Project,
+        limit: usize,
+        tracked: impl Fn(&str) -> bool,
+    ) -> Result<IndexStats> {
         let repo_path = project.root().to_string_lossy().to_string();
         let repo_id = self.register_repository(&repo_path)?;
 
         let revisions = project.revisions(limit)?;
         let tx = self.conn.transaction()?;
+
+        // Drop rows for file types that are no longer tracked, so narrowing the
+        // settings takes effect when the index is rebuilt (inserts below only
+        // add, they never remove).
+        let stale: Vec<(String, String)> = {
+            let mut stmt =
+                tx.prepare("SELECT commit_oid, path FROM file_revision WHERE repo_id = ?1")?;
+            let rows = stmt.query_map(params![repo_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.filter_map(|row| row.ok())
+                .filter(|(_, path)| !tracked(path))
+                .collect()
+        };
+        for (commit_oid, path) in stale {
+            tx.execute(
+                "DELETE FROM file_revision WHERE repo_id = ?1 AND commit_oid = ?2 AND path = ?3",
+                params![repo_id, commit_oid, path],
+            )?;
+        }
 
         for revision in &revisions {
             tx.execute(
@@ -163,6 +195,9 @@ impl Index {
             )?;
 
             for file in project.files_at(Some(&revision.oid))? {
+                if !tracked(&file.path) {
+                    continue;
+                }
                 tx.execute(
                     "INSERT INTO blob(oid, size, is_binary, ext) VALUES(?1, ?2, ?3, ?4)
                      ON CONFLICT(oid) DO NOTHING",
@@ -311,5 +346,32 @@ mod tests {
         assert!(stats.dedup_saved_bytes > 0);
         assert!(stats.referenced_bytes > stats.unique_bytes);
         assert_eq!(index.schema_version().unwrap(), 1);
+    }
+
+    #[test]
+    fn index_filter_excludes_and_prunes_untracked_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        {
+            let mut cfg = repo.config().unwrap();
+            cfg.set_str("user.name", "Test").unwrap();
+            cfg.set_str("user.email", "test@example.com").unwrap();
+        }
+        commit(&repo, "part.stl", b"mesh", "r1");
+        commit(&repo, "scene.glb", b"scene", "r2");
+
+        let project = Project::open(dir.path()).unwrap();
+        let mut index = Index::in_memory().unwrap();
+        // Index everything: part.stl at r1+r2 and scene.glb at r2.
+        assert_eq!(index.index(&project, 100).unwrap().file_revisions, 3);
+
+        // Re-index ignoring .glb: its previously indexed row is pruned.
+        let filtered = index
+            .index_filtered(&project, 100, |path| !path.ends_with(".glb"))
+            .unwrap();
+        assert_eq!(filtered.file_revisions, 2);
+
+        // The blob itself is shared content and is intentionally kept.
+        assert_eq!(index.distinct_blobs().unwrap().len(), 2);
     }
 }

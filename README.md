@@ -291,16 +291,16 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 ### Todo
 
 - [x] Recent projects list and quick access
-- [ ] Add support for more CAD formats
+- [x] Add support for more CAD formats
 - [ ] Revision branching view
 - [ ] File relationships (assembly dependencies)
 - [ ] GH Actions for creating binaries and converters
-- [ ] No overwrite of existing git project
+- [x] No overwrite of existing git project
 - [ ] Clear cache
 - [x] Central bin dir for converters and app settings
 - [x] Ignore files created for opened files in SW
 - [x] Update Viewer rendering style (colors, lighting, edge highlights, etc.)
-- [ ] Allow users to ignore certain types of files (app and project level)
+- [x] Allow users to ignore certain types of files (app and project level)
 - [x] Hide terminal that displays whenever a converter is called
 
 ### Potential Formats

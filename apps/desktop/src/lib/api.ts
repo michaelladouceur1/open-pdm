@@ -63,6 +63,13 @@ export interface IndexStats {
   dedup_saved_bytes: number;
 }
 
+// User-configurable file-tracking settings, mirrored from the core `Settings`.
+// Only the extensions listed in `ignored_extensions` are excluded; everything
+// OpenPDM recognises is tracked by default.
+export interface Settings {
+  ignored_extensions: string[];
+}
+
 export const openProject = (path: string) =>
   invoke<ProjectInfo>("open_project", { path });
 
@@ -112,3 +119,24 @@ export const getShapePayloads = (path: string, file: string, rev: string | null)
 
 export const indexProject = (path: string, limit: number) =>
   invoke<IndexStats>("index_project", { path, limit });
+
+/** The project's existing index summary, or null when it has never been indexed. */
+export const getIndexStats = (path: string) =>
+  invoke<IndexStats | null>("index_stats", { path });
+
+/** File extensions OpenPDM can track, for the settings dialog to list. */
+export const getTrackableExtensions = () =>
+  invoke<string[]>("trackable_extensions");
+
+/** App-level tracking settings, shared across every project. */
+export const getAppSettings = () => invoke<Settings>("get_app_settings");
+
+export const setAppSettings = (settings: Settings) =>
+  invoke<void>("set_app_settings", { settings });
+
+/** Tracking settings for a single project. */
+export const getProjectSettings = (path: string) =>
+  invoke<Settings>("get_project_settings", { path });
+
+export const setProjectSettings = (path: string, settings: Settings) =>
+  invoke<void>("set_project_settings", { path, settings });

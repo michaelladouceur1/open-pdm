@@ -16,8 +16,9 @@ pub mod git;
 pub mod handlers;
 pub mod index;
 pub mod mesh;
+pub mod settings;
 
-pub use app::{bin_dir, converters_file, APP_DIR};
+pub use app::{bin_dir, converters_file, settings_file, APP_DIR};
 pub use convert::{
     CachedConverter, CommandConverter, Converter, ConverterRegistry, NullConverter, TARGET_STL,
 };
@@ -29,3 +30,4 @@ pub use handlers::{
 };
 pub use index::{Index, IndexStats};
 pub use mesh::Mesh;
+pub use settings::{is_tracked, Settings};
