@@ -170,12 +170,26 @@ export default function Viewer({ positions = [], indices = [], theme = "light" }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setIndex(indices);
+    // Still populate normals: three's vertex shader always reads the `normal`
+    // attribute (via `beginnormal_vertex`). They are not used for shading
+    // though — see `flatShading` below.
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
 
+    // Shade per face rather than per vertex. Without this, three derives smooth
+    // (averaged) normals from shared vertices, so formats whose triangles share
+    // vertices (3MF, OBJ, PLY, DAE, STEP/IGES/BREP) rendered with gradient
+    // shading while the STL-backed converted formats — whose triangles each own
+    // their vertices — were flat. Flat shading is independent of index sharing,
+    // so every format renders the same.
     const solid = new THREE.Mesh(
       geometry,
-      new THREE.MeshStandardMaterial({ color: 0x7fb2ff, metalness: 0.15, roughness: 0.55 }),
+      new THREE.MeshStandardMaterial({
+        color: 0x7fb2ff,
+        metalness: 0.15,
+        roughness: 0.55,
+        flatShading: true,
+      }),
     );
     solidRef.current = solid;
     scene.add(solid);
