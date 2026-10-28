@@ -19,6 +19,7 @@ repository through to a live 3D preview.
   `CadHandler` trait. Built-ins: STL (binary + ASCII), OBJ (mesh + metadata),
   PLY (ASCII + binary, little/big-endian), 3MF (ZIP/OPC package, build items and
   components with transforms), COLLADA `.dae` (scene graph with node transforms),
+  glTF/GLB (JSON scene graph with binary buffers, decoded natively),
   FreeCAD `.FCStd` (document metadata + B-rep shapes), STEP `.step`/`.stp`
   (header metadata + exact geometry), IGES `.iges`/`.igs` and OpenCASCADE BREP
   `.brep`/`.brp` (section metadata + exact geometry), with a generic fallback for
@@ -185,6 +186,23 @@ Adding a format means implementing this trait and registering it; the core and
 UI do not change. Proprietary formats the core cannot parse itself are handled by
 delegating to an external converter rather than in-process parsing (see below).
 
+### glTF / GLB (`.gltf` / `.glb`)
+
+glTF 2.0 is Khronos' open 3D interchange format. The handler reads both
+containers: `.gltf` (a UTF-8 JSON document) and `.glb` (a binary container whose
+JSON and `BIN` chunks are split apart). Buffers are resolved from the GLB `BIN`
+chunk or an embedded `data:` (base64) URI, then `accessors`/`bufferViews` are
+decoded straight into a `Mesh` — triangle lists, strips and fans are expanded,
+and the node hierarchy is composed (matrix or TRS), so an assembly renders in
+place. Because the geometry is already triangles there is no external converter
+and no WebAssembly kernel.
+
+One limitation of the single-file handler seam: a `.gltf` whose `buffer.uri`
+points at a sibling `.bin` cannot be resolved (the handler only receives the one
+file's bytes). Such files still list and report metadata — including an
+`unresolved_buffers` count — but preview empty. Use `.glb` or a `.gltf` with
+embedded buffers for a self-contained preview.
+
 ### FreeCAD documents (`.FCStd`)
 
 A `.FCStd` file is a ZIP container: `Document.xml` is the manifest (document
@@ -293,7 +311,9 @@ These are open formats that are already triangle meshes, so a pure-Rust parser d
 
 - PLY — ASCII + binary LE/BE. Already allowlisted; canonical scan/print format. Trivial parser.
 - 3MF — ZIP + XML, so it reuses the exact zip + quick-xml pattern .FCStd already uses, and it carries units, materials, and build items in metadata. Great ROI.
-- glTF / GLB — open Khronos interchange; JSON (+ binary buffer), or load directly client-side with three.js's GLTFLoader (the viewer already pulls from three/examples/jsm).
+- glTF / GLB — open Khronos interchange; JSON (+ binary buffer), or load
+  directly client-side with three.js's GLTFLoader (the viewer already pulls from
+  three/examples/jsm). **Implemented** natively in the core (see above).
 - OFF, Collada (.dae), VRML/X3D (.wrl/.x3d) — all open, XML/text mesh formats. Lower priority but nearly free once 3MF/glTF prove the pattern.
 
 #### Tier 2 — exact B-rep via the existing OCCT payload seam (tiny core change)

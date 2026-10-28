@@ -4,15 +4,16 @@
 //! a specific file type (extract metadata, tessellate to a mesh, later: extract
 //! assemblies/BOM) is implemented behind [`CadHandler`] and registered in a
 //! [`HandlerRegistry`]. Built-ins cover mesh formats (STL, OBJ, PLY, 3MF,
-//! COLLADA), FreeCAD documents (`.FCStd`), exact-geometry interchange (STEP,
-//! IGES, OpenCASCADE BREP), and a converter-backed handler for proprietary/native
-//! CAD formats the core cannot parse itself.
+//! COLLADA, glTF/GLB), FreeCAD documents (`.FCStd`), exact-geometry interchange
+//! (STEP, IGES, OpenCASCADE BREP), and a converter-backed handler for
+//! proprietary/native CAD formats the core cannot parse itself.
 
 pub mod brep;
 pub mod converted;
 pub mod dae;
 pub mod fcstd;
 pub mod generic;
+pub mod gltf;
 pub mod iges;
 pub mod obj;
 pub mod ply;
@@ -94,9 +95,9 @@ pub struct HandlerRegistry {
 }
 
 impl HandlerRegistry {
-    /// The default set of handlers: STL, OBJ, PLY, 3MF, COLLADA, IGES, BREP,
-    /// FreeCAD, STEP, the converter-backed handler (metadata only until a
-    /// converter is configured) and a catch-all fallback.
+    /// The default set of handlers: STL, OBJ, PLY, 3MF, COLLADA, glTF/GLB,
+    /// IGES, BREP, FreeCAD, STEP, the converter-backed handler (metadata only
+    /// until a converter is configured) and a catch-all fallback.
     pub fn builtin() -> Self {
         Self::with_converters(Arc::new(ConverterRegistry::empty()))
     }
@@ -112,6 +113,7 @@ impl HandlerRegistry {
                 Box::new(ply::PlyHandler),
                 Box::new(three_mf::ThreeMfHandler),
                 Box::new(dae::DaeHandler),
+                Box::new(gltf::GltfHandler),
                 Box::new(iges::IgesHandler),
                 Box::new(brep::BrepHandler),
                 Box::new(fcstd::FcstdHandler),
@@ -258,6 +260,10 @@ mod tests {
         assert_eq!(reg.resolve("a.3MF").name(), "3mf");
         assert_eq!(reg.resolve("a.dae").name(), "dae");
         assert_eq!(reg.resolve("a.DAE").name(), "dae");
+        assert_eq!(reg.resolve("a.gltf").name(), "gltf");
+        assert_eq!(reg.resolve("a.GLTF").name(), "gltf");
+        assert_eq!(reg.resolve("a.glb").name(), "gltf");
+        assert_eq!(reg.resolve("a.GLB").name(), "gltf");
         assert_eq!(reg.resolve("a.fcstd").name(), "fcstd");
         assert_eq!(reg.resolve("a.FCStd").name(), "fcstd");
         assert_eq!(reg.resolve("a.sldprt").name(), "converted");
