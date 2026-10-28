@@ -12,20 +12,13 @@ interface ViewerProps {
   theme?: Theme;
 }
 
-// Scene colours per theme. The light background matches the surrounding
+// Scene background per theme. The light background matches the surrounding
 // light UI; the dark background is a lighter grey than a pure near-black so
-// the model and grid stay legible.
-const VIEWER_COLORS: Record<Theme, { background: number; gridMajor: number; gridMinor: number }> = {
-  light: { background: 0xdddddd, gridMajor: 0xb8bfc9, gridMinor: 0xd2d7de },
-  dark: { background: 0x222222, gridMajor: 0x565d6e, gridMinor: 0x424856 },
+// the model stays legible.
+const VIEWER_COLORS: Record<Theme, { background: number }> = {
+  light: { background: 0xdddddd },
+  dark: { background: 0x222222 },
 };
-
-function makeGrid(theme: Theme): THREE.GridHelper {
-  const { gridMajor, gridMinor } = VIEWER_COLORS[theme];
-  const grid = new THREE.GridHelper(10, 10, gridMajor, gridMinor);
-  grid.rotation.x = Math.PI / 2; // Lay the grid flat in the Z-up plane.
-  return grid;
-}
 
 export default function Viewer({ positions = [], indices = [], theme = "light" }: ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -36,7 +29,6 @@ export default function Viewer({ positions = [], indices = [], theme = "light" }
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const solidRef = useRef<THREE.Mesh | null>(null);
-  const gridRef = useRef<THREE.GridHelper | null>(null);
   const themeRef = useRef<Theme>(theme);
   themeRef.current = theme;
 
@@ -62,10 +54,6 @@ export default function Viewer({ positions = [], indices = [], theme = "light" }
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
     key.position.set(4, -6, 8);
     scene.add(key);
-
-    const grid = makeGrid(themeRef.current);
-    gridRef.current = grid;
-    scene.add(grid);
 
     // Keep the drawing buffer and camera in sync with the container's CSS box.
     // The canvas's CSS box is pinned to the container (stylesheet + the inline
@@ -119,33 +107,18 @@ export default function Viewer({ positions = [], indices = [], theme = "light" }
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();
-      if (gridRef.current) {
-        gridRef.current.geometry.dispose();
-        (gridRef.current.material as THREE.Material).dispose();
-        gridRef.current = null;
-      }
       sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
     };
   }, []);
 
-  // Repaint the scene when the app theme changes: swap the background and
-  // rebuild the grid with colours suited to the new background.
+  // Repaint the scene when the app theme changes: swap the background.
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
 
     scene.background = new THREE.Color(VIEWER_COLORS[theme].background);
-
-    if (gridRef.current) {
-      scene.remove(gridRef.current);
-      gridRef.current.geometry.dispose();
-      (gridRef.current.material as THREE.Material).dispose();
-      const grid = makeGrid(theme);
-      gridRef.current = grid;
-      scene.add(grid);
-    }
   }, [theme]);
 
   // Rebuild the mesh whenever the geometry changes.
