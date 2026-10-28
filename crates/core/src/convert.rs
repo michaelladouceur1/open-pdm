@@ -23,6 +23,9 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use git2::{ObjectType, Oid};
 use serde::Deserialize;
 
@@ -33,6 +36,16 @@ pub const TARGET_STL: &str = "stl";
 
 /// How long a converter process may run before it is killed.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Windows `CREATE_NO_WINDOW` process-creation flag.
+///
+/// The desktop app is a windows-subsystem binary (no console of its own), so a
+/// console converter launched with the default flags gets a fresh console window
+/// — a blank terminal that flashes up on every conversion. This flag suppresses
+/// that. Converters are GUI or console programs whose stdout/stderr we already
+/// redirect, so there is nothing to show.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Turns one file's bytes into `target`-format bytes using an external engine.
 pub trait Converter: Send + Sync {
@@ -176,6 +189,11 @@ impl Converter for CommandConverter {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr));
+
+        // A console converter must not allocate a console window: the GUI has
+        // none of its own, so the child would otherwise pop up a blank terminal.
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command.spawn().map_err(|e| {
             Error::Conversion(format!(
