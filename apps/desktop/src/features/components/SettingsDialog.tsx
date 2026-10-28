@@ -3,7 +3,6 @@ import {
   Dialog,
   DialogBackdrop,
   DialogClose,
-  DialogDescription,
   DialogPopup,
   DialogPortal,
   DialogTitle,
@@ -23,6 +22,11 @@ function StatRow({ label, value }: { label: string; value: ReactNode }) {
       <span className="font-medium">{value}</span>
     </div>
   );
+}
+
+/** Format a byte count as megabytes, e.g. `12.3 MB`. */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // A grid of checkboxes, one per trackable extension. Checked means "tracked";
@@ -85,12 +89,18 @@ export default function SettingsDialog({
     indexing,
     buildIndex,
     loadIndexStats,
+    cacheSize,
+    clearingCache,
+    loadCacheSize,
+    clearCache,
   } = useApp();
 
-  // Show the index's current state each time the dialog opens; building it is
-  // an explicit action from the Index tab.
+  // Show the index's current state and cache size each time the dialog opens;
+  // building the index and clearing the cache are explicit actions.
   useEffect(() => {
-    if (open) void loadIndexStats();
+    if (!open) return;
+    void loadIndexStats();
+    void loadCacheSize();
   }, [open]);
 
   const appIgnored = new Set(appSettings.ignored_extensions);
@@ -116,19 +126,19 @@ export default function SettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
         <DialogBackdrop />
-        <DialogPopup>
+        <DialogPopup className="max-w-3xl">
           <div className="flex flex-col gap-1">
             <DialogTitle>Settings</DialogTitle>
           </div>
 
-          <Tabs defaultValue="app" orientation="vertical" className="min-h-72 gap-5">
+          <Tabs defaultValue="app" orientation="vertical" className="h-[26rem] gap-5">
             <TabsList className="min-w-28 self-start">
               <TabsTab value="app">App</TabsTab>
               <TabsTab value="project">Project</TabsTab>
               <TabsTab value="index">Index</TabsTab>
             </TabsList>
 
-            <TabsPanel value="app" className="min-w-0 flex-1">
+            <TabsPanel value="app" className="min-w-0 flex-1 overflow-y-auto pr-1">
               <div className="flex flex-col gap-3">
                 <div>
                   <h3 className="text-sm font-medium">Tracked file types (App)</h3>
@@ -138,10 +148,29 @@ export default function SettingsDialog({
                   ignored={appIgnored}
                   onToggle={toggleApp}
                 />
+
+                <div className="flex items-center justify-between gap-3 border-t pt-3">
+                  <div>
+                    <div className="text-sm font-medium">App cache</div>
+                    <div className="text-sm text-muted-foreground">
+                      {cacheSize === null
+                        ? "Calculating…"
+                        : `${formatMegabytes(cacheSize)} used by converted previews.`}
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void clearCache()}
+                    disabled={clearingCache || cacheSize === null || cacheSize === 0}
+                  >
+                    {clearingCache ? "Clearing…" : "Clear cache"}
+                  </Button>
+                </div>
               </div>
             </TabsPanel>
 
-            <TabsPanel value="project" className="min-w-0 flex-1">
+            <TabsPanel value="project" className="min-w-0 flex-1 overflow-y-auto pr-1">
               {info ? (
                 <div className="flex flex-col gap-3">
                   <div>
@@ -161,7 +190,7 @@ export default function SettingsDialog({
               )}
             </TabsPanel>
 
-            <TabsPanel value="index" className="min-w-0 flex-1">
+            <TabsPanel value="index" className="min-w-0 flex-1 overflow-y-auto pr-1">
               <div className="flex flex-col gap-3">
                 <div>
                   <h3 className="text-sm font-medium">Project index</h3>

@@ -140,3 +140,9 @@ export const getProjectSettings = (path: string) =>
 
 export const setProjectSettings = (path: string, settings: Settings) =>
   invoke<void>("set_project_settings", { path, settings });
+
+/** Size, in bytes, of the app-level converted-artifact cache. */
+export const getCacheSize = () => invoke<number>("cache_size");
+
+/** Empty the app-level converted-artifact cache (it rebuilds on demand). */
+export const clearCache = () => invoke<void>("clear_cache");

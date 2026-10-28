@@ -296,7 +296,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [ ] File relationships (assembly dependencies)
 - [ ] GH Actions for creating binaries and converters
 - [x] No overwrite of existing git project
-- [ ] Clear cache
+- [x] Clear cache
 - [x] Central bin dir for converters and app settings
 - [x] Ignore files created for opened files in SW
 - [x] Update Viewer rendering style (colors, lighting, edge highlights, etc.)

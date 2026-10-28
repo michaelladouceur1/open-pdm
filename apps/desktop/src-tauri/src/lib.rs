@@ -321,6 +321,19 @@ fn set_project_settings(path: String, settings: Settings) -> Result<(), String> 
         .map_err(to_err)
 }
 
+/// Total size, in bytes, of the app-level converted-artifact cache.
+#[tauri::command]
+fn cache_size() -> u64 {
+    open_pdm_core::app::cache_size()
+}
+
+/// Empty the app-level converted-artifact cache. It rebuilds on demand, so this
+/// only costs the time to reconvert files the next time they are previewed.
+#[tauri::command]
+fn clear_cache() -> Result<(), String> {
+    open_pdm_core::app::clear_cache().map_err(to_err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ensure the app-level converter directory (`$HOME/.openpdm`) exists, with
@@ -352,7 +365,9 @@ pub fn run() {
             get_app_settings,
             set_app_settings,
             get_project_settings,
-            set_project_settings
+            set_project_settings,
+            cache_size,
+            clear_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running OpenPDM");

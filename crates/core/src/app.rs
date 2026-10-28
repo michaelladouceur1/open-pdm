@@ -49,6 +49,53 @@ pub fn cache_dir() -> PathBuf {
     dir().join("cache")
 }
 
+/// Total size, in bytes, of everything under the app [`cache_dir`].
+///
+/// Returns 0 when the cache does not exist yet. Used by the settings dialog to
+/// report how much disk the converted-artifact cache is using.
+pub fn cache_size() -> u64 {
+    dir_size(&cache_dir())
+}
+
+/// Remove everything under the app [`cache_dir`], keeping the directory itself.
+///
+/// The cache is a rebuildable convenience (converted previews are regenerated
+/// on demand), so clearing it is always safe. Missing directory is a no-op.
+pub fn clear_cache() -> Result<()> {
+    clear_dir(&cache_dir())
+}
+
+/// Recursively sum the sizes of the files under `path` (0 if it is missing).
+fn dir_size(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            Ok(meta) if meta.is_dir() => dir_size(&entry.path()),
+            Ok(meta) => meta.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+/// Remove the contents of `path` without removing `path` itself.
+fn clear_dir(path: &Path) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let target = entry.path();
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            std::fs::remove_dir_all(&target)?;
+        } else {
+            std::fs::remove_file(&target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Create the application directory, its `bin` subdirectory and an empty
 /// `converters.json`, skipping anything that already exists.
 ///
@@ -151,5 +198,20 @@ mod tests {
 
         let text = std::fs::read_to_string(&config).unwrap();
         assert!(text.contains("creo"));
+    }
+
+    #[test]
+    fn cache_size_sums_and_clear_removes_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path();
+        std::fs::create_dir_all(cache.join("stl").join("conv")).unwrap();
+        std::fs::write(cache.join("stl").join("conv").join("a.stl"), vec![0u8; 10]).unwrap();
+        std::fs::write(cache.join("stl").join("b.stl"), vec![0u8; 5]).unwrap();
+
+        assert_eq!(dir_size(cache), 15);
+        clear_dir(cache).unwrap();
+        assert_eq!(dir_size(cache), 0);
+        // The cache directory itself is kept.
+        assert!(cache.is_dir());
     }
 }

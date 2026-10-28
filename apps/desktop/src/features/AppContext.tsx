@@ -15,10 +15,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   CURRENT_REV,
   checkoutFile as checkoutFileAt,
+  clearCache as clearCacheAt,
   commitStaged,
   createProject,
   deleteFileRevision as deleteFileRevisionAt,
   getAppSettings,
+  getCacheSize,
   getFileRevisions,
   getFiles,
   getIndexStats,
@@ -95,6 +97,16 @@ export interface AppContextValue {
   updateAppSettings: (next: Settings) => Promise<void>;
   /** Persist project-level settings, then refresh the open file listing. */
   updateProjectSettings: (next: Settings) => Promise<void>;
+
+  // App-level converted-artifact cache (`$HOME/.openpdm/cache`).
+  /** Cache size in bytes; null until first loaded. */
+  cacheSize: number | null;
+  /** True while the cache is being cleared. */
+  clearingCache: boolean;
+  /** Re-read the current cache size. */
+  loadCacheSize: () => Promise<void>;
+  /** Empty the cache, then refresh the reported size. */
+  clearCache: () => Promise<void>;
 
   // Appearance and layout preferences, persisted across launches.
   theme: Theme;
@@ -199,6 +211,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [appSettings, setAppSettings] = useState<Settings>({ ignored_extensions: [] });
   const [projectSettings, setProjectSettings] = useState<Settings>({ ignored_extensions: [] });
   const [trackableExtensions, setTrackableExtensions] = useState<string[]>([]);
+  // App-level converted-artifact cache size, in bytes.
+  const [cacheSize, setCacheSize] = useState<number | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
   // Draft commit message and in-flight flag for the Current revision composer.
   const [commitMessage, setCommitMessage] = useState("");
   const [committing, setCommitting] = useState(false);
@@ -674,6 +689,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Re-read the app cache size for the settings dialog.
+  async function loadCacheSize() {
+    try {
+      setCacheSize(await getCacheSize());
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Empty the app cache, then report the (now empty) size.
+  async function clearCache() {
+    setError(null);
+    setClearingCache(true);
+    try {
+      await clearCacheAt();
+      setCacheSize(await getCacheSize());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setClearingCache(false);
+    }
+  }
+
   // First pass: try to open the default demo path on launch. Intentionally
   // runs once; later loads are driven by the path box, Open and New.
   useEffect(() => {
@@ -809,6 +847,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadIndexStats,
     updateAppSettings,
     updateProjectSettings,
+    cacheSize,
+    clearingCache,
+    loadCacheSize,
+    clearCache,
     theme,
     setTheme,
     filesCollapsed,
