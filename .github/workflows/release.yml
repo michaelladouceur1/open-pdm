@@ -101,7 +101,7 @@ jobs:
         with:
           projectPath: apps/desktop
           tagName: ${{ steps.release.outputs.tag }}
-          releaseName: "OpenPDM ${{ steps.release.outputs.tag }}"
+          releaseName: "${{ steps.release.outputs.tag }}"
           releaseBody: "Download the installer for your platform from the assets below."
           # Set to false to publish the release immediately instead of as a draft.
           releaseDraft: true
