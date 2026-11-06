@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CURRENT_REV } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useApp } from "./AppContext";
-import ListRow from "./components/ListRow";
+import CurrentRevisionRow from "./components/CurrentRevisionRow";
 import RevisionRow from "./components/RevisionRow";
 import SectionHeader from "./components/SectionHeader";
 import ViewModeButton from "./components/ViewModeButton";
@@ -25,6 +25,7 @@ export default function RevisionsSection() {
     checkingOutCommit,
     changeCount,
     checkoutCommit,
+    checkoutCurrent,
     revisionsView,
     setRevisionsView,
     revisionsCollapsed,
@@ -88,26 +89,18 @@ export default function RevisionsSection() {
       {!revisionsCollapsed && (
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-1.5 px-3 pb-3">
-            {info &&
-              (revisionsView === "compact" ? (
-                <ListRow compact active={isCurrent} onClick={() => pickRevision(CURRENT_REV)}>
-                  <span className="min-w-[8ch] shrink-0 font-mono text-xs text-muted-foreground">open</span>
-                  <span className="min-w-0 flex-1 truncate text-[13px]">Current</span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {changeCount > 0 ? `${changeCount} changed` : "clean"}
-                  </span>
-                </ListRow>
-              ) : (
-                <ListRow active={isCurrent} onClick={() => pickRevision(CURRENT_REV)}>
-                  <span className="font-mono text-xs text-muted-foreground">working tree</span>
-                  <span className="text-[13px]">Current</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {changeCount > 0
-                      ? `${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`
-                      : "open revision · no changes"}
-                  </span>
-                </ListRow>
-              ))}
+            {info && (
+              <CurrentRevisionRow
+                compact={revisionsView === "compact"}
+                active={isCurrent}
+                checkedOut={checkedOutRev === CURRENT_REV}
+                changeCount={changeCount}
+                checkingOut={checkingOutCommit === CURRENT_REV}
+                disabled={checkingOutCommit !== null || !info.head}
+                onSelect={() => void pickRevision(CURRENT_REV)}
+                onCheckout={() => void checkoutCurrent()}
+              />
+            )}
             {revisions.length === 0 && (
               <p className="text-xs text-muted-foreground">No revisions. Open a repository above.</p>
             )}

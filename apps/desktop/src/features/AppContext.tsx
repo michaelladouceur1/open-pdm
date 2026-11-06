@@ -65,9 +65,9 @@ export interface AppContextValue {
   revisions: Revision[];
   selectedRev: string | null;
   isCurrent: boolean;
-  /** Commit whose tree is currently materialised in the working tree. */
+  /** Revision whose tree is currently materialised in the working tree. */
   checkedOutRev: string | null;
-  /** Oid of the commit being checked out, or null when none is in flight. */
+  /** Revision being checked out (a commit oid or `CURRENT_REV`), or null. */
   checkingOutCommit: string | null;
   files: FileEntry[];
   changeCount: number;
@@ -148,6 +148,8 @@ export interface AppContextValue {
   checkoutFile: (oid: string) => Promise<void>;
   /** Restore an entire commit's tree into the working tree. */
   checkoutCommit: (oid: string) => Promise<void>;
+  /** Restore the working tree to HEAD and mark the Current revision checked out. */
+  checkoutCurrent: () => Promise<void>;
   /** Delete the selected file's version at a revision from history. */
   deleteFileRevision: (oid: string) => Promise<void>;
   toggleStaged: (file: FileEntry) => Promise<void>;
@@ -623,6 +625,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // "Check out" the open Current revision: restore every tracked path to HEAD,
+  // dropping the staged/unstaged changes, then mark Current as the revision the
+  // working tree reflects. This is the way back after checking out an old commit.
+  async function checkoutCurrent() {
+    const head = info?.head;
+    if (!head) {
+      setError("The current revision has no committed state to check out.");
+      return;
+    }
+    setError(null);
+    setCheckingOutCommit(CURRENT_REV);
+    try {
+      await checkoutCommitAt(projectPath, head.oid);
+      setCheckedOutRev(CURRENT_REV);
+      setChangeCount((await getFiles(projectPath, CURRENT_REV)).length);
+      await pickRevision(CURRENT_REV);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCheckingOutCommit(null);
+    }
+  }
+
   // Delete the selected file's version at `oid` from history. The core rewrites
   // the commit chain, so the oids change: refresh the revision list, return to
   // the working tree, and rebuild the file's version history.
@@ -634,9 +659,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       await deleteFileRevisionAt(projectPath, file.path, oid);
       const nextRevisions = await getRevisions(projectPath, 50);
+      const nextHead = nextRevisions[0] ?? null;
       setRevisions(nextRevisions);
+      setInfo((prev) => (prev ? { ...prev, head: nextHead } : prev));
       // The rewrite moved HEAD (and synced the working tree to the new tip).
-      setCheckedOutRev(nextRevisions[0]?.oid ?? null);
+      setCheckedOutRev(nextHead?.oid ?? null);
       setSelectedRev(CURRENT_REV);
 
       // One read of the whole working tree: the changed subset feeds the Files
@@ -918,6 +945,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pickFileRev,
     checkoutFile,
     checkoutCommit,
+    checkoutCurrent,
     deleteFileRevision,
     toggleStaged,
     stageAll,
