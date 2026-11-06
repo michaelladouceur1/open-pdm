@@ -6,10 +6,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CURRENT_REV } from "@/lib/api";
-import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useApp } from "./AppContext";
 import ListRow from "./components/ListRow";
+import RevisionRow from "./components/RevisionRow";
 import SectionHeader from "./components/SectionHeader";
 import ViewModeButton from "./components/ViewModeButton";
 
@@ -21,7 +21,10 @@ export default function RevisionsSection() {
     revisions,
     selectedRev,
     isCurrent,
+    checkedOutRev,
+    checkingOutCommit,
     changeCount,
+    checkoutCommit,
     revisionsView,
     setRevisionsView,
     revisionsCollapsed,
@@ -108,34 +111,19 @@ export default function RevisionsSection() {
             {revisions.length === 0 && (
               <p className="text-xs text-muted-foreground">No revisions. Open a repository above.</p>
             )}
-            {revisions.map((revision) =>
-              revisionsView === "compact" ? (
-                <ListRow
-                  key={revision.oid}
-                  compact
-                  active={revision.oid === selectedRev}
-                  onClick={() => pickRevision(revision.oid)}
-                >
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">{revision.short}</span>
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{revision.summary}</span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {formatTime(revision.time)}
-                  </span>
-                </ListRow>
-              ) : (
-                <ListRow
-                  key={revision.oid}
-                  active={revision.oid === selectedRev}
-                  onClick={() => pickRevision(revision.oid)}
-                >
-                  <span className="font-mono text-xs text-muted-foreground">{revision.short}</span>
-                  <span className="line-clamp-2 text-[13px]">{revision.summary}</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {revision.author} · {formatTime(revision.time)}
-                  </span>
-                </ListRow>
-              ),
-            )}
+            {revisions.map((revision) => (
+              <RevisionRow
+                key={revision.oid}
+                revision={revision}
+                compact={revisionsView === "compact"}
+                active={revision.oid === selectedRev}
+                checkedOut={revision.oid === checkedOutRev}
+                checkingOut={revision.oid === checkingOutCommit}
+                disabled={checkingOutCommit !== null}
+                onSelect={() => void pickRevision(revision.oid)}
+                onCheckout={() => void checkoutCommit(revision.oid)}
+              />
+            ))}
           </div>
         </ScrollArea>
       )}

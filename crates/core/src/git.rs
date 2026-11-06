@@ -620,6 +620,93 @@ impl Project {
         Ok(())
     }
 
+    /// Restore an entire commit's tree into the working tree and index.
+    ///
+    /// The whole-commit equivalent of [`Project::checkout_file`]: every tracked
+    /// path is rewritten to the content it had at `rev`, and tracked paths that
+    /// the commit does not contain are removed. HEAD is deliberately not moved,
+    /// so history stays browsable and the restored contents appear as staged
+    /// changes in the open "Current" revision.
+    ///
+    /// Untracked files are left alone, as `git checkout` would, so a new part
+    /// the user has not committed yet is never silently destroyed.
+    pub fn checkout_commit(&self, rev: &str) -> Result<()> {
+        if self.repo.is_bare() {
+            return Err(Error::NoWorktree(
+                "cannot check out a commit into a bare repository".into(),
+            ));
+        }
+        let commit = self.repo.revparse_single(rev)?.peel_to_commit()?;
+        let tree = commit.tree()?;
+
+        // Every blob in the commit, excluding OpenPDM's machine-local state.
+        let mut target: Vec<(String, git2::Oid)> = Vec::new();
+        tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            if entry.kind() == Some(git2::ObjectType::Blob) {
+                if let Some(name) = entry.name() {
+                    let path = format!("{root}{name}");
+                    if !is_internal_path(&path) {
+                        target.push((path, entry.id()));
+                    }
+                }
+            }
+            git2::TreeWalkResult::Ok
+        })?;
+        let target_paths: BTreeSet<&str> = target.iter().map(|(path, _)| path.as_str()).collect();
+
+        let mut index = self.repo.index()?;
+
+        // Remove tracked files the commit does not contain so the working tree
+        // reflects the commit's full tree. Untracked (index-absent) files are
+        // left untouched.
+        let stale: Vec<String> = index
+            .iter()
+            .filter_map(|entry| std::str::from_utf8(&entry.path).ok().map(str::to_string))
+            .filter(|path| !is_internal_path(path) && !target_paths.contains(path.as_str()))
+            .collect();
+        for path in stale {
+            let rel = Path::new(&path);
+            let dest = self.root.join(rel);
+            if let Ok(metadata) = dest.symlink_metadata() {
+                if !metadata.is_dir() {
+                    std::fs::remove_file(&dest)?;
+                    // Prune directories the removal left empty, stopping at
+                    // the repository root or the first non-empty directory.
+                    let mut parent = dest.parent();
+                    while let Some(dir) = parent {
+                        if dir == self.root || std::fs::remove_dir(dir).is_err() {
+                            break;
+                        }
+                        parent = dir.parent();
+                    }
+                }
+            }
+            index.remove_path(rel)?;
+        }
+
+        // Write every path in the commit and sync the index to match.
+        for (path, oid) in target {
+            let rel = Path::new(&path);
+            // Keep every write inside the repository root.
+            if rel.is_absolute()
+                || rel
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(Error::UnknownRevision(path));
+            }
+            let blob = self.repo.find_blob(oid)?;
+            let dest = self.root.join(rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&dest, blob.content())?;
+            index.add_path(rel)?;
+        }
+        index.write()?;
+        Ok(())
+    }
+
     /// Discard the working-tree change to `path`, restoring it to HEAD.
     ///
     /// The equivalent of `git checkout HEAD -- <path>`: a modified or deleted
@@ -1375,6 +1462,66 @@ mod tests {
 
         // Checking out a path absent from the revision is an error.
         assert!(project.checkout_file(&first.oid, "missing.txt").is_err());
+    }
+
+    #[test]
+    fn checks_out_an_entire_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "add a");
+        commit_file(&repo, "b.txt", b"two", "add b");
+        let first = Project::open(dir.path()).unwrap().head_revision().unwrap();
+
+        // The next commit changes a, deletes b and adds c.
+        std::fs::write(dir.path().join("a.txt"), b"one changed").unwrap();
+        std::fs::remove_file(dir.path().join("b.txt")).unwrap();
+        std::fs::write(dir.path().join("c.txt"), b"three").unwrap();
+        let project = Project::open(dir.path()).unwrap();
+        project.stage("a.txt").unwrap();
+        project.stage("b.txt").unwrap();
+        project.stage("c.txt").unwrap();
+        project.commit("update a and c").unwrap();
+
+        let head_before = project.head_revision().unwrap();
+        project.checkout_commit(&first.oid).unwrap();
+
+        // Every path is restored to the commit's tree: a and b are back, c is
+        // gone because the commit did not contain it.
+        assert_eq!(project.blob(Some(WORKTREE), "a.txt").unwrap(), b"one");
+        assert_eq!(project.blob(Some(WORKTREE), "b.txt").unwrap(), b"two");
+        assert!(!dir.path().join("c.txt").exists());
+        // HEAD did not move; the restored contents are staged in Current.
+        assert_eq!(project.head_revision().unwrap().oid, head_before.oid);
+        let changes = project.working_files().unwrap();
+        assert_eq!(changes.len(), 3);
+        assert!(changes.iter().all(|file| file.staged == Some(true)));
+
+        // Checking out an unknown revision is an error.
+        assert!(project.checkout_commit("no-such-revision").is_err());
+    }
+
+    #[test]
+    fn checking_out_a_commit_leaves_untracked_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "a.txt", b"one", "add a");
+        let first = Project::open(dir.path()).unwrap().head_revision().unwrap();
+        commit_file(&repo, "a.txt", b"two", "update a");
+
+        std::fs::write(dir.path().join("scratch.txt"), b"untracked").unwrap();
+        let project = Project::open(dir.path()).unwrap();
+        project.checkout_commit(&first.oid).unwrap();
+
+        assert_eq!(project.blob(Some(WORKTREE), "a.txt").unwrap(), b"one");
+        assert_eq!(
+            std::fs::read(dir.path().join("scratch.txt")).unwrap(),
+            b"untracked"
+        );
+        assert!(project
+            .working_files()
+            .unwrap()
+            .iter()
+            .any(|file| file.path == "scratch.txt"));
     }
 
     #[test]

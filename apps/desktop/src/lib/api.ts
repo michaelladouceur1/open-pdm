@@ -87,6 +87,10 @@ export const getFileRevisions = (path: string, file: string, limit = 100) =>
 export const checkoutFile = (path: string, file: string, rev: string) =>
   invoke<void>("checkout_file", { path, file, rev });
 
+/** Restore an entire commit's tree into the working tree (without moving HEAD). */
+export const checkoutCommit = (path: string, rev: string) =>
+  invoke<void>("checkout_commit", { path, rev });
+
 /** Remove a single file's version from history (rewrites the commit chain). */
 export const deleteFileRevision = (path: string, file: string, rev: string) =>
   invoke<void>("delete_file_revision", { path, file, rev });

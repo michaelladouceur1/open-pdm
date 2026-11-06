@@ -167,6 +167,17 @@ fn checkout_file(path: String, file: String, rev: String) -> Result<(), String> 
     open(&path)?.checkout_file(&rev, &file).map_err(to_err)
 }
 
+/// Restore an entire commit's tree into the working tree.
+///
+/// Backs the Revisions panel's per-commit "check out" action. HEAD is not
+/// moved; the restored contents are staged so they become part of the open
+/// "Current" revision. Tracked files the commit does not contain are removed,
+/// while untracked files are left alone.
+#[tauri::command]
+fn checkout_commit(path: String, rev: String) -> Result<(), String> {
+    open(&path)?.checkout_commit(&rev).map_err(to_err)
+}
+
 /// Remove a single file's version from history.
 ///
 /// Backs the detail panel's per-revision "delete" action. Rewrites the commit
@@ -355,6 +366,7 @@ pub fn run() {
             revert_file,
             commit,
             checkout_file,
+            checkout_commit,
             delete_file_revision,
             metadata,
             mesh,

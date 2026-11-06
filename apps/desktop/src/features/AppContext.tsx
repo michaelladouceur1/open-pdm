@@ -14,6 +14,7 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   CURRENT_REV,
+  checkoutCommit as checkoutCommitAt,
   checkoutFile as checkoutFileAt,
   clearCache as clearCacheAt,
   commitStaged,
@@ -64,6 +65,10 @@ export interface AppContextValue {
   revisions: Revision[];
   selectedRev: string | null;
   isCurrent: boolean;
+  /** Commit whose tree is currently materialised in the working tree. */
+  checkedOutRev: string | null;
+  /** Oid of the commit being checked out, or null when none is in flight. */
+  checkingOutCommit: string | null;
   files: FileEntry[];
   changeCount: number;
   selectedFile: FileEntry | null;
@@ -141,6 +146,8 @@ export interface AppContextValue {
   pickFileRev: (oid: string) => Promise<void>;
   /** Restore the selected file from a revision into the working tree. */
   checkoutFile: (oid: string) => Promise<void>;
+  /** Restore an entire commit's tree into the working tree. */
+  checkoutCommit: (oid: string) => Promise<void>;
   /** Delete the selected file's version at a revision from history. */
   deleteFileRevision: (oid: string) => Promise<void>;
   toggleStaged: (file: FileEntry) => Promise<void>;
@@ -190,6 +197,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [selectedRev, setSelectedRev] = useState<string | null>(null);
+  // The commit the working tree was last checked out from. It starts at HEAD
+  // and follows explicit whole-commit checkouts without moving HEAD.
+  const [checkedOutRev, setCheckedOutRev] = useState<string | null>(null);
+  const [checkingOutCommit, setCheckingOutCommit] = useState<string | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   // Number of changed files in the open "Current" revision, kept even while a
   // committed revision is selected so the Current row can show a count.
@@ -247,7 +258,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setStats(null);
     setCommitMessage("");
     try {
-      setInfo(await openProject(path));
+      const projectInfo = await openProject(path);
+      setInfo(projectInfo);
+      // A freshly opened project is at HEAD until the user checks out a commit.
+      setCheckedOutRev(projectInfo.head?.oid ?? null);
       setProjectSettings(await getProjectSettings(path));
       // Remember the project that actually opened so the next launch can
       // restore it and the header can offer it again.
@@ -268,6 +282,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       setError(String(e));
       setInfo(null);
+      setCheckedOutRev(null);
       setProjectSettings({ ignored_extensions: [] });
       setRevisions([]);
       setFiles([]);
@@ -474,8 +489,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setError(null);
     setCommitting(true);
     try {
-      await commitStaged(projectPath, message);
+      const revision = await commitStaged(projectPath, message);
       setCommitMessage("");
+      // The new commit is HEAD, so it is now the checked-out commit too.
+      setCheckedOutRev(revision.oid);
+      setInfo((prev) => (prev ? { ...prev, head: revision } : prev));
       setRevisions(await getRevisions(projectPath, 50));
       await refreshWorking();
     } catch (e) {
@@ -585,6 +603,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Restore the entire tree of `oid` into the working tree. HEAD stays put, so
+  // history remains browsable and the restored contents show up as staged
+  // changes in the Current revision. Select the commit afterwards so the Files
+  // panel reflects what was checked out.
+  async function checkoutCommit(oid: string) {
+    setError(null);
+    setCheckingOutCommit(oid);
+    try {
+      await checkoutCommitAt(projectPath, oid);
+      setCheckedOutRev(oid);
+      setRevisions(await getRevisions(projectPath, 50));
+      setChangeCount((await getFiles(projectPath, CURRENT_REV)).length);
+      await pickRevision(oid);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCheckingOutCommit(null);
+    }
+  }
+
   // Delete the selected file's version at `oid` from history. The core rewrites
   // the commit chain, so the oids change: refresh the revision list, return to
   // the working tree, and rebuild the file's version history.
@@ -595,7 +633,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setDeletingRev(true);
     try {
       await deleteFileRevisionAt(projectPath, file.path, oid);
-      setRevisions(await getRevisions(projectPath, 50));
+      const nextRevisions = await getRevisions(projectPath, 50);
+      setRevisions(nextRevisions);
+      // The rewrite moved HEAD (and synced the working tree to the new tip).
+      setCheckedOutRev(nextRevisions[0]?.oid ?? null);
       setSelectedRev(CURRENT_REV);
 
       // One read of the whole working tree: the changed subset feeds the Files
@@ -827,6 +868,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     revisions,
     selectedRev,
     isCurrent,
+    checkedOutRev,
+    checkingOutCommit,
     files,
     changeCount,
     selectedFile,
@@ -874,6 +917,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pickFile,
     pickFileRev,
     checkoutFile,
+    checkoutCommit,
     deleteFileRevision,
     toggleStaged,
     stageAll,

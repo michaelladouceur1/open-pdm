@@ -42,6 +42,11 @@ built on **git + git-lfs** as the source of truth for file content.
   (staged, without moving HEAD), and **delete** rewrites history to drop that
   one version while keeping later versions. Both actions ask for confirmation
   first.
+- **Whole-commit checkout** — every entry in the Revisions panel has a checkout
+  button that restores that commit's entire tracked tree into the working tree
+  (again staged, without moving HEAD). Tracked files the commit does not contain
+  are removed, untracked files are left alone, and the checked-out commit stays
+  highlighted so the working tree's base revision is always clear.
 - **Project content allowlist** — only recognised CAD extensions (mesh formats,
   FreeCAD, STEP/IGES, common native CAD, DXF/DWG, …) appear in the Files panel
   and can be staged. Repository metadata, notes and generated files such as the
