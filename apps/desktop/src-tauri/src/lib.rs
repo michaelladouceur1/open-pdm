@@ -157,6 +157,28 @@ fn commit(path: String, message: String) -> Result<Revision, String> {
     open(&path)?.commit(&message).map_err(to_err)
 }
 
+/// Push the project's history to its configured remote repository.
+///
+/// Backs the header's Sync button. This is push-only for now: the selected
+/// branch is published to the URL saved in the project settings, and nothing is
+/// fetched or merged back. Runs off the main thread because a network push can
+/// take a while.
+#[tauri::command]
+async fn sync_project(path: String) -> Result<open_pdm_core::PushResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = open(&path)?;
+        let remote = project_settings(&project)
+            .remote
+            .filter(|remote| remote.is_configured())
+            .ok_or_else(|| {
+                "no remote repository configured — add one in Project settings".to_string()
+            })?;
+        project.push_remote(&remote).map_err(to_err)
+    })
+    .await
+    .map_err(to_err)?
+}
+
 /// Restore a single file from a revision into the working tree.
 ///
 /// Backs the detail panel's per-revision "check out" action. Only `file` is
@@ -365,6 +387,7 @@ pub fn run() {
             unstage_file,
             revert_file,
             commit,
+            sync_project,
             checkout_file,
             checkout_commit,
             delete_file_revision,

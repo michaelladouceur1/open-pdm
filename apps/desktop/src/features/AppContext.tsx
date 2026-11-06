@@ -35,6 +35,7 @@ import {
   openProject,
   setAppSettings as persistAppSettings,
   setProjectSettings as persistProjectSettings,
+  syncProject as syncProjectAt,
   stageFile,
   unstageFile,
   revertFile as revertFileAt,
@@ -43,6 +44,7 @@ import {
   type IndexStats,
   type Mesh,
   type ProjectInfo,
+  type RemoteSettings,
   type Revision,
   type Settings,
 } from "@/lib/api";
@@ -102,6 +104,16 @@ export interface AppContextValue {
   updateAppSettings: (next: Settings) => Promise<void>;
   /** Persist project-level settings, then refresh the open file listing. */
   updateProjectSettings: (next: Settings) => Promise<void>;
+  /** Persist just the project's remote repository configuration. */
+  updateRemoteSettings: (remote: RemoteSettings | null) => Promise<void>;
+
+  // Push-only sync with the remote repository configured in Project settings.
+  /** True while the project is being pushed to its remote. */
+  syncing: boolean;
+  /** Push the current branch's history to the configured remote. */
+  syncProject: () => Promise<void>;
+  /** Transient success message shown beneath the header. */
+  notice: string | null;
 
   // App-level converted-artifact cache (`$HOME/.openpdm/cache`).
   /** Cache size in bytes; null until first loaded. */
@@ -227,6 +239,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // App-level converted-artifact cache size, in bytes.
   const [cacheSize, setCacheSize] = useState<number | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // Transient success feedback for push sync (errors use the error banner).
+  const [notice, setNotice] = useState<string | null>(null);
   // Draft commit message and in-flight flag for the Current revision composer.
   const [commitMessage, setCommitMessage] = useState("");
   const [committing, setCommitting] = useState(false);
@@ -256,6 +271,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   async function loadPath(path: string) {
     setError(null);
+    setNotice(null);
     setBusy(true);
     setStats(null);
     setCommitMessage("");
@@ -757,6 +773,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Persist just the project's remote repository configuration. Tracking
+  // settings are carried over so the two sections never clobber each other.
+  async function updateRemoteSettings(remote: RemoteSettings | null) {
+    const next: Settings = {
+      ...projectSettings,
+      remote: remote && remote.url.trim() ? remote : null,
+    };
+    setProjectSettings(next);
+    setError(null);
+    try {
+      await persistProjectSettings(projectPath, next);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Push the current branch's history to the configured remote. Push-only for
+  // now: there is intentionally no fetch/pull counterpart yet.
+  async function syncProject() {
+    if (!info) {
+      setError("Open a project before syncing.");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setSyncing(true);
+    try {
+      const result = await syncProjectAt(projectPath);
+      setNotice(
+        result.up_to_date
+          ? `Already up to date — ${result.branch} is on ${result.remote}`
+          : `Pushed ${result.branch} to ${result.remote}`,
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   // Re-read the app cache size for the settings dialog.
   async function loadCacheSize() {
     try {
@@ -809,6 +865,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     document.documentElement.classList.toggle("dark", theme === "dark");
     setStored("theme", theme);
   }, [theme]);
+
+  // Success notices are informational; clear them after a few seconds so the
+  // header does not keep claiming a stale sync result.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   // Persist the stacked-panel layout so heights, collapsed state and view modes
   // all survive reloads.
@@ -917,6 +981,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadIndexStats,
     updateAppSettings,
     updateProjectSettings,
+    updateRemoteSettings,
+    syncing,
+    syncProject,
+    notice,
     cacheSize,
     clearingCache,
     loadCacheSize,

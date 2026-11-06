@@ -3,7 +3,19 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::settings::RemoteSettings;
 use crate::{Error, Result};
+
+/// Outcome of a push sync, flattened for transport to the UI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PushResult {
+    /// URL of the remote the branch was pushed to.
+    pub remote: String,
+    /// Branch that was pushed.
+    pub branch: String,
+    /// True when the remote already had the same tip (nothing new to send).
+    pub up_to_date: bool,
+}
 
 /// Sentinel revision name selecting the *working tree* — the uncommitted
 /// "Current" revision — instead of a commit. Passed through the same APIs that
@@ -80,10 +92,11 @@ pub struct FileEntry {
 
 /// A thin, git-backed view of a project.
 ///
-/// Git is the source of truth. This type reads history and can initialise an
-/// empty repository ([`Project::init`]); content writes, network and LFS/lock
-/// operations are intentionally left to the `git`/`git-lfs` subprocess layer
-/// (not part of this first pass).
+/// Git is the source of truth. This type reads history, can initialise an empty
+/// repository ([`Project::init`]), and can publish a branch to a remote
+/// ([`Project::push_remote`]). LFS/lock operations are intentionally left to
+/// the `git`/`git-lfs` subprocess layer, as is the network push itself, so
+/// existing command-line credentials keep working.
 pub struct Project {
     repo: git2::Repository,
     root: PathBuf,
@@ -185,6 +198,88 @@ impl Project {
         } else {
             None
         }
+    }
+
+    /// Push the local history to a remote repository.
+    ///
+    /// This is deliberately push-only: the branch's commits (and therefore its
+    /// full history) are published to `remote.url`, but nothing is fetched or
+    /// merged back. `remote.branch` selects the local branch to publish and
+    /// defaults to the currently checked-out branch.
+    ///
+    /// The push is delegated to the system `git` executable rather than
+    /// libgit2's network transports. That keeps OpenPDM small and, more
+    /// importantly, lets users authenticate with the credentials they already
+    /// use from the command line — SSH keys/agents and git credential helpers
+    /// for HTTPS. Set `GIT_TERMINAL_PROMPT=0` so a GUI launch can never block
+    /// on a hidden terminal password prompt.
+    pub fn push_remote(&self, remote: &RemoteSettings) -> Result<PushResult> {
+        let url = remote.url.trim();
+        if url.is_empty() {
+            return Err(Error::NoRemoteConfigured);
+        }
+        // The URL is passed as a single argument and never through a shell, but
+        // reject control characters so a broken paste cannot smuggle extra
+        // options or output into the command.
+        if url.chars().any(char::is_control) || url.starts_with('-') {
+            return Err(Error::InvalidRemote(url.to_string()));
+        }
+        if self.is_unborn() {
+            return Err(Error::NoCommits);
+        }
+
+        let branch = match remote.branch.trim() {
+            "" => self.branch().ok_or_else(|| {
+                Error::UnknownBranch("HEAD is detached; choose a branch".into())
+            })?,
+            branch => branch
+                .strip_prefix("refs/heads/")
+                .unwrap_or(branch)
+                .to_string(),
+        };
+        if !git2::Reference::is_valid_name(&format!("refs/heads/{branch}")) {
+            return Err(Error::InvalidRemote(format!(
+                "invalid branch name: {branch}"
+            )));
+        }
+        self.repo
+            .find_branch(&branch, git2::BranchType::Local)
+            .map_err(|_| Error::UnknownBranch(branch.clone()))?;
+
+        let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(["push", "--porcelain", url, &refspec])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| {
+                Error::RemoteFailed(format!(
+                    "could not run git (is it installed and on PATH?): {error}"
+                ))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let detail = if !stderr.trim().is_empty() {
+                stderr.trim()
+            } else if !stdout.trim().is_empty() {
+                stdout.trim()
+            } else {
+                "git push exited with a non-zero status"
+            };
+            return Err(Error::RemoteFailed(detail.to_string()));
+        }
+
+        // `--porcelain` reports accepted refs on stdout. An up-to-date push has
+        // no object transfer, which is worth surfacing differently in the UI.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(PushResult {
+            remote: url.to_string(),
+            branch,
+            up_to_date: stdout.contains("[up to date]"),
+        })
     }
 
     /// True when HEAD has never been committed.
@@ -1378,6 +1473,84 @@ mod tests {
         assert_eq!(revision.parents, 0);
         assert!(!project.is_unborn());
         assert_eq!(project.revisions(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pushes_history_to_a_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "part.stl", b"solid x", "add part");
+        commit_file(&repo, "bracket.stl", b"solid y", "add bracket");
+
+        let project = Project::open(dir.path()).unwrap();
+        let branch = project.branch().unwrap();
+        let head = project.head_revision().unwrap().oid;
+
+        // A bare repository acts as the remote; pushing to it needs no network
+        // or credentials, but exercises the same git push path as GitHub.
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote = git2::Repository::init_bare(remote_dir.path()).unwrap();
+        let remote_url = remote_dir.path().display().to_string();
+
+        let result = project
+            .push_remote(&RemoteSettings {
+                url: remote_url.clone(),
+                branch: String::new(),
+            })
+            .unwrap();
+        assert_eq!(result.remote, remote_url);
+        assert_eq!(result.branch, branch);
+        assert!(!result.up_to_date);
+
+        // The remote branch now points at the local HEAD, and its history is
+        // reachable, not just the tip.
+        let pushed = remote
+            .find_reference(&format!("refs/heads/{branch}"))
+            .unwrap();
+        assert_eq!(pushed.target().unwrap().to_string(), head);
+        let pushed_commit = remote.find_commit(pushed.target().unwrap()).unwrap();
+        assert_eq!(pushed_commit.parent_count(), 1);
+        assert_eq!(pushed_commit.parent(0).unwrap().summary(), Some("add part"));
+
+        // A second push has nothing new to send.
+        let again = project
+            .push_remote(&RemoteSettings {
+                url: remote_url,
+                branch: String::new(),
+            })
+            .unwrap();
+        assert!(again.up_to_date);
+    }
+
+    #[test]
+    fn push_requires_a_remote_and_a_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        commit_file(&repo, "part.stl", b"solid x", "add part");
+        let project = Project::open(dir.path()).unwrap();
+
+        assert!(matches!(
+            project.push_remote(&RemoteSettings::default()),
+            Err(Error::NoRemoteConfigured)
+        ));
+        assert!(matches!(
+            project.push_remote(&RemoteSettings {
+                url: "not-a-real-remote".to_string(),
+                branch: "missing-branch".to_string(),
+            }),
+            Err(Error::UnknownBranch(_))
+        ));
+
+        // An unborn repository has no history to publish.
+        let empty = tempfile::tempdir().unwrap();
+        let unborn = Project::init(empty.path()).unwrap();
+        assert!(matches!(
+            unborn.push_remote(&RemoteSettings {
+                url: empty.path().display().to_string(),
+                branch: String::new(),
+            }),
+            Err(Error::NoCommits)
+        ));
     }
 
     #[test]

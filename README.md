@@ -35,6 +35,11 @@ built on **git + git-lfs** as the source of truth for file content.
 - **Recent projects** — the path box in the header doubles as a dropdown: its
   chevron lists the last 10 opened projects for one-click loading, and the list
   is remembered across launches.
+- **Push sync to a remote** — configure a remote repository URL (and optionally
+  a branch) in **Settings → Project**, then use the sync button in the header to
+  publish the checked-out branch's history to GitHub, GitLab or any git remote.
+  Sync is push-only for now; authentication uses the system `git` credential
+  helper or SSH agent, so no credentials are stored by OpenPDM.
 - **Per-file history, checkout and delete** — the detail panel lists every
   committed version of the selected part (`Rev A`, `Rev B`, …) beside its
   metadata. Selecting a version previews it in the 3D viewer; **check out**
@@ -58,8 +63,8 @@ built on **git + git-lfs** as the source of truth for file content.
 - **Demo CLI (`openpdm`)** — the same core exposed from the terminal.
 
 Not yet implemented (by design, see the plan): committing the open revision,
-`git-lfs` transfer and locking, native in-process parsing
-of proprietary formats, remote providers, thumbnails.
+`git-lfs` transfer and locking, pull/fetch sync, native in-process parsing
+of proprietary formats, remote browsing providers, thumbnails.
 
 ## Architecture
 
@@ -170,9 +175,12 @@ Outputs:
   - `appimage/OpenPDM_<ver>_amd64.AppImage` — `chmod +x` and run (needs `libfuse2`,
     or use `--appimage-extract-and-run`)
 
-The only runtime dependency is the OS webview (Linux: `libwebkit2gtk-4.1-0` +
-`libgtk-3-0`; Windows: WebView2; macOS: system WKWebView). Bundles must be built
-on their target OS — there is no Linux→Windows/macOS cross-compile.
+For browsing and editing, the only runtime dependency is the OS webview
+(Linux: `libwebkit2gtk-4.1-0` + `libgtk-3-0`; Windows: WebView2; macOS: system
+WKWebView). **Push sync** additionally uses the `git` executable on `PATH` so it
+can reuse your SSH agent and credential helper; bundling git with the installers
+is still on the roadmap. Bundles must be built on their target OS — there is no
+Linux→Windows/macOS cross-compile.
 
 ## The handler seam
 
@@ -307,7 +315,7 @@ hint explaining how to enable the preview. The CLI exposes the same path:
 - [x] Update Viewer rendering style (colors, lighting, edge highlights, etc.)
 - [x] Allow users to ignore certain types of files (app and project level)
 - [x] Hide terminal that displays whenever a converter is called
-- [ ] Remote origin for git projects
+- [x] Remote origin for git projects (push-only sync)
 - [ ] Package git, git-lfs and eDrawings with installers
 - [ ] Package converters with releases
 

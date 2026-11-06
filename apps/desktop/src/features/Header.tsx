@@ -4,6 +4,7 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   MoonIcon,
+  RefreshCwIcon,
   SettingsIcon,
   SunIcon,
 } from "lucide-react";
@@ -32,14 +33,32 @@ export default function Header() {
     setTheme,
     busy,
     openRecent,
+    info,
+    projectSettings,
+    syncProject,
+    syncing,
   } = useApp();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"app" | "project" | "index">("app");
   const [recentOpen, setRecentOpen] = useState(false);
   // The popover is anchored to the whole path field so the menu lines up with
   // the input rather than just the narrow chevron button.
   const pathFieldRef = useRef<HTMLDivElement>(null);
 
   const themeLabel = theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+  const hasRemote = Boolean(projectSettings.remote?.url.trim());
+
+  // Push when a remote is configured. Otherwise take the user straight to the
+  // Project settings section where they can add one.
+  function handleSync() {
+    if (!info) return;
+    if (!hasRemote) {
+      setSettingsTab("project");
+      setSettingsOpen(true);
+      return;
+    }
+    void syncProject();
+  }
 
   return (
     <>
@@ -92,7 +111,29 @@ export default function Header() {
         <Tooltip>
           <TooltipTrigger
             className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
-            onClick={() => setSettingsOpen(true)}
+            onClick={handleSync}
+            disabled={!info || busy || syncing}
+            aria-label="Push to remote repository"
+          >
+            <RefreshCwIcon className={cn(syncing && "animate-spin")} />
+          </TooltipTrigger>
+          <TooltipContent>
+            {!info
+              ? "Open a project to sync"
+              : syncing
+                ? "Pushing…"
+                : hasRemote
+                  ? "Push to remote"
+                  : "Configure a remote repository"}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
+            onClick={() => {
+              setSettingsTab("app");
+              setSettingsOpen(true);
+            }}
             aria-label="Settings"
           >
             <SettingsIcon />
@@ -116,7 +157,11 @@ export default function Header() {
           </span>
         )}
       </header>
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialTab={settingsTab}
+      />
     </>
   );
 }

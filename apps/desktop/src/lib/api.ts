@@ -63,11 +63,29 @@ export interface IndexStats {
   dedup_saved_bytes: number;
 }
 
+// Remote repository used by the header's push-sync button. Credentials are not
+// stored; the system git credential helper / SSH agent handles authentication.
+export interface RemoteSettings {
+  url: string;
+  /** Branch to push. Empty uses the currently checked-out branch. */
+  branch: string;
+}
+
 // User-configurable file-tracking settings, mirrored from the core `Settings`.
 // Only the extensions listed in `ignored_extensions` are excluded; everything
-// OpenPDM recognises is tracked by default.
+// OpenPDM recognises is tracked by default. Project settings may also carry the
+// optional remote repository.
 export interface Settings {
   ignored_extensions: string[];
+  remote?: RemoteSettings | null;
+}
+
+/** Outcome of a push sync. */
+export interface SyncResult {
+  remote: string;
+  branch: string;
+  /** True when the remote already had the same tip. */
+  up_to_date: boolean;
 }
 
 export const openProject = (path: string) =>
@@ -111,6 +129,10 @@ export const revertFile = (path: string, file: string) =>
 /** Commit the staged changes of the open "Current" revision into history. */
 export const commitStaged = (path: string, message: string) =>
   invoke<Revision>("commit", { path, message });
+
+/** Push the project's history to its configured remote (push-only sync). */
+export const syncProject = (path: string) =>
+  invoke<SyncResult>("sync_project", { path });
 
 export const getMetadata = (path: string, file: string, rev: string | null) =>
   invoke<FileMetadata>("metadata", { path, file, rev });

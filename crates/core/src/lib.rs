@@ -23,11 +23,11 @@ pub use convert::{
     CachedConverter, CommandConverter, Converter, ConverterRegistry, NullConverter, TARGET_STL,
 };
 pub use error::{Error, Result};
-pub use git::{is_internal_path, FileEntry, Project, Revision, INTERNAL_DIR, WORKTREE};
+pub use git::{is_internal_path, FileEntry, Project, PushResult, Revision, INTERNAL_DIR, WORKTREE};
 pub use handlers::{
     is_lock_file, is_project_file, CadHandler, FileMetadata, HandlerRegistry, ShapePayload,
     PROJECT_EXTENSIONS,
 };
 pub use index::{Index, IndexStats};
 pub use mesh::Mesh;
-pub use settings::{is_tracked, Settings};
+pub use settings::{is_tracked, RemoteSettings, Settings};

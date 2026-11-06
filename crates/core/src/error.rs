@@ -30,6 +30,21 @@ pub enum Error {
     #[error("commit message is required")]
     EmptyMessage,
 
+    #[error("no remote repository configured — add one in Project settings")]
+    NoRemoteConfigured,
+
+    #[error("repository has no commits to push")]
+    NoCommits,
+
+    #[error("branch not found: {0}")]
+    UnknownBranch(String),
+
+    #[error("invalid remote repository URL: {0}")]
+    InvalidRemote(String),
+
+    #[error("git push failed: {0}")]
+    RemoteFailed(String),
+
     #[error("failed to parse {format}: {message}")]
     Parse { format: String, message: String },
 
