@@ -20,12 +20,41 @@ use serde::{Deserialize, Serialize};
 use crate::handlers::extension_of;
 use crate::Result;
 
-/// File types (by extension) the user has opted out of tracking.
+/// A remote git repository the project can be pushed to.
+///
+/// Push syncing is deliberately one-way for now: clicking Sync publishes the
+/// local branch's history to the remote, but never pulls changes back. The
+/// credentials are not stored here — the system `git` installation's credential
+/// helper (or SSH agent) is used, exactly as it would be from a terminal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteSettings {
+    /// Remote repository URL, e.g. `https://github.com/user/project.git` or
+    /// `git@github.com:user/project.git`.
+    #[serde(default)]
+    pub url: String,
+    /// Branch to push. Empty means the currently checked-out branch.
+    #[serde(default)]
+    pub branch: String,
+}
+
+impl RemoteSettings {
+    /// Whether a URL has been entered.
+    pub fn is_configured(&self) -> bool {
+        !self.url.trim().is_empty()
+    }
+}
+
+/// File types (by extension) the user has opted out of tracking, plus the
+/// optional remote repository used by push syncing.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Settings {
     /// Lower-case extensions (without the dot) that are not tracked.
     #[serde(default)]
     pub ignored_extensions: Vec<String>,
+    /// Remote repository for push syncing. Only meaningful for project-level
+    /// settings; the app-level settings file simply leaves it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteSettings>,
 }
 
 impl Settings {
@@ -95,6 +124,7 @@ mod tests {
     fn ignored_extension_is_not_tracked() {
         let settings = Settings {
             ignored_extensions: vec!["glb".to_string()],
+            ..Settings::default()
         };
         assert!(settings.ignores("scene.GLB"));
         assert!(!settings.tracks("scene.glb"));
@@ -105,9 +135,11 @@ mod tests {
     fn app_and_project_scopes_combine() {
         let app = Settings {
             ignored_extensions: vec!["glb".to_string()],
+            ..Settings::default()
         };
         let project = Settings {
             ignored_extensions: vec!["step".to_string()],
+            ..Settings::default()
         };
         assert!(!is_tracked("scene.glb", &app, &project));
         assert!(!is_tracked("bracket.step", &app, &project));
@@ -120,10 +152,34 @@ mod tests {
         let path = tmp.path().join("nested").join("settings.json");
         let settings = Settings {
             ignored_extensions: vec!["glb".to_string(), "dae".to_string()],
+            remote: Some(RemoteSettings {
+                url: "https://github.com/example/project.git".to_string(),
+                branch: "main".to_string(),
+            }),
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
         // A missing file falls back to defaults.
         assert_eq!(Settings::load(tmp.path().join("absent.json")), Settings::default());
+    }
+
+    #[test]
+    fn remote_is_optional_and_validated() {
+        // Older settings files without a remote still load.
+        let settings: Settings =
+            serde_json::from_str(r#"{"ignored_extensions":["glb"]}"#).unwrap();
+        assert_eq!(settings.remote, None);
+
+        assert!(!RemoteSettings::default().is_configured());
+        assert!(!RemoteSettings {
+            url: "   ".to_string(),
+            ..RemoteSettings::default()
+        }
+        .is_configured());
+        assert!(RemoteSettings {
+            url: "git@github.com:example/project.git".to_string(),
+            ..RemoteSettings::default()
+        }
+        .is_configured());
     }
 }

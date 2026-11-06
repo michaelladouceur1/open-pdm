@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   Dialog,
   DialogBackdrop,
@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { formatBytes } from "@/lib/format";
@@ -71,12 +72,16 @@ function ExtensionPicker({
 // The settings dialog opened from the header's settings button. Vertical tabs
 // on the left switch between app-level settings, project-level settings and the
 // current project's index.
+type SettingsTab = "app" | "project" | "index";
+
 export default function SettingsDialog({
   open,
   onOpenChange,
+  initialTab = "app",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialTab?: SettingsTab;
 }) {
   const {
     appSettings,
@@ -84,6 +89,7 @@ export default function SettingsDialog({
     trackableExtensions,
     updateAppSettings,
     updateProjectSettings,
+    updateRemoteSettings,
     info,
     stats,
     indexing,
@@ -94,17 +100,34 @@ export default function SettingsDialog({
     loadCacheSize,
     clearCache,
   } = useApp();
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
+  // The remote fields are edited as a draft so a partial URL is not written to
+  // disk on every keystroke; the Save button commits them.
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [remoteBranch, setRemoteBranch] = useState("");
 
   // Show the index's current state and cache size each time the dialog opens;
   // building the index and clearing the cache are explicit actions.
   useEffect(() => {
     if (!open) return;
+    setTab(initialTab);
     void loadIndexStats();
     void loadCacheSize();
   }, [open]);
 
   const appIgnored = new Set(appSettings.ignored_extensions);
   const projectIgnored = new Set(projectSettings.ignored_extensions);
+  const savedRemoteUrl = projectSettings.remote?.url ?? "";
+  const savedRemoteBranch = projectSettings.remote?.branch ?? "";
+  const remoteDirty =
+    remoteUrl.trim() !== savedRemoteUrl || remoteBranch.trim() !== savedRemoteBranch;
+
+  // Load the saved remote into the draft whenever the open project or its
+  // saved configuration changes (e.g. after Save or switching projects).
+  useEffect(() => {
+    setRemoteUrl(savedRemoteUrl);
+    setRemoteBranch(savedRemoteBranch);
+  }, [savedRemoteUrl, savedRemoteBranch, info?.root]);
 
   function toggleApp(extension: string) {
     const next = new Set(appIgnored);
@@ -117,7 +140,18 @@ export default function SettingsDialog({
     const next = new Set(projectIgnored);
     if (next.has(extension)) next.delete(extension);
     else next.add(extension);
-    void updateProjectSettings({ ignored_extensions: [...next].sort() });
+    void updateProjectSettings({
+      ...projectSettings,
+      ignored_extensions: [...next].sort(),
+    });
+  }
+
+  function saveRemote(event: FormEvent) {
+    event.preventDefault();
+    void updateRemoteSettings({
+      url: remoteUrl.trim(),
+      branch: remoteBranch.trim(),
+    });
   }
 
   const appTracked = trackableExtensions.length - appIgnored.size;
@@ -131,7 +165,12 @@ export default function SettingsDialog({
             <DialogTitle>Settings</DialogTitle>
           </div>
 
-          <Tabs defaultValue="app" orientation="vertical" className="h-[26rem] gap-5">
+          <Tabs
+            value={tab}
+            onValueChange={(value) => setTab(value as SettingsTab)}
+            orientation="vertical"
+            className="h-[26rem] gap-5"
+          >
             <TabsList className="min-w-28 self-start">
               <TabsTab value="app">App</TabsTab>
               <TabsTab value="project">Project</TabsTab>
@@ -172,20 +211,67 @@ export default function SettingsDialog({
 
             <TabsPanel value="project" className="min-w-0 flex-1 overflow-y-auto pr-1">
               {info ? (
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <h3 className="text-sm font-medium">Tracked file types (Project)</h3>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <h3 className="text-sm font-medium">Tracked file types (Project)</h3>
+                    </div>
+                    <ExtensionPicker
+                      extensions={trackableExtensions}
+                      ignored={projectIgnored}
+                      disabled={appIgnored}
+                      onToggle={toggleProject}
+                    />
                   </div>
-                  <ExtensionPicker
-                    extensions={trackableExtensions}
-                    ignored={projectIgnored}
-                    disabled={appIgnored}
-                    onToggle={toggleProject}
-                  />
+
+                  <form
+                    onSubmit={saveRemote}
+                    className="flex flex-col gap-3 border-t pt-3"
+                  >
+                    <div>
+                      <h3 className="text-sm font-medium">Remote repository</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Push this project's history to GitHub, GitLab or any git remote.
+                        Sync is push-only for now; nothing is pulled back. Authentication
+                        uses your system git credentials (SSH agent or credential helper).
+                      </p>
+                    </div>
+                    <label className="flex flex-col gap-1.5 text-sm">
+                      <span className="font-medium">Repository URL</span>
+                      <Input
+                        value={remoteUrl}
+                        onChange={(event) => setRemoteUrl(event.target.value)}
+                        placeholder="https://github.com/user/project.git"
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="flex max-w-sm flex-col gap-1.5 text-sm">
+                      <span className="font-medium">Branch</span>
+                      <Input
+                        value={remoteBranch}
+                        onChange={(event) => setRemoteBranch(event.target.value)}
+                        placeholder={info.branch ?? "Current branch"}
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Leave blank to push the checked-out branch.
+                      </span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Button type="submit" variant="outline" size="sm" disabled={!remoteDirty}>
+                        Save remote
+                      </Button>
+                      {!remoteDirty && savedRemoteUrl ? (
+                        <span className="text-xs text-muted-foreground">Saved</span>
+                      ) : null}
+                    </div>
+                  </form>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Open a project to configure its tracked file types.
+                  Open a project to configure its tracked file types and remote repository.
                 </p>
               )}
             </TabsPanel>
